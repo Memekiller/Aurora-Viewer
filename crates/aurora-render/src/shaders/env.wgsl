@@ -1712,6 +1712,25 @@ fn rain_sheltered(world: vec3<f32>) -> f32 {
     return 1.0 - open * 0.25;
 }
 
+// The light local lights give a drop: some all around it, much more when the
+// lamp is behind it seen from the camera (the halo of rain around a street
+// light). Point lights only; projectors are left out of the prototype.
+fn rain_lamps(world: vec3<f32>, frag: vec2<f32>, view: vec3<f32>) -> vec3<f32> {
+    var lights = light_walk(world, frag);
+    var sum = vec3<f32>(0.0);
+    for (var i = next_light(&lights); i >= 0; i = next_light(&lights)) {
+        let lt = frame.lights[i];
+        let to_l = lt.pos_radius.xyz - world;
+        let dist = length(to_l);
+        let radius = lt.pos_radius.w;
+        if (dist >= radius) { continue; }
+        let atten = ll_light_atten(dist / radius, lt.color_falloff.w);
+        let behind = max(dot(-view, to_l / max(dist, 1e-4)), 0.0);
+        sum += lt.color_falloff.rgb * atten * (0.25 + pow(behind, 6.0) * 2.5);
+    }
+    return sum;
+}
+
 @fragment
 fn fs_rain(in: RainOut) -> @location(0) vec4<f32> {
     if (in.life <= 0.001) { discard; }
@@ -1735,9 +1754,12 @@ fn fs_rain(in: RainOut) -> @location(0) vec4<f32> {
     let toward_sun = max(dot(-view, frame.sun_dir.xyz), 0.0);
     let glint = frame.sun_color.rgb * frame.sun_dir.w * (pow(toward_sun, 12.0) * 2.5 + pow(toward_sun, 3.0) * 0.25);
     let ambient = frame.sky_horizon.rgb * 0.12;
-    let color = mix(transmitted * 1.04, reflected, fresnel) + (glint + ambient) * (0.35 + fresnel);
+    let lamps = rain_lamps(in.world, in.clip.xy, view);
+    let color = mix(transmitted * 1.04, reflected, fresnel) + (glint + ambient) * (0.35 + fresnel) + lamps * (0.6 + fresnel);
 
-    var alpha = taper * sqrt(r) * (0.22 + fresnel * 0.55) * in.life;
+    // drops a lamp lights stand out of the dark
+    let lit = min(dot(lamps, vec3<f32>(0.2126, 0.7152, 0.0722)) * 0.35, 0.45);
+    var alpha = taper * sqrt(r) * (0.22 + fresnel * 0.55 + lit) * in.life;
     alpha *= 1.0 - rain_sheltered(in.world);
     // soft where a drop meets the ground or a wall behind it
     let depth = scene_depth_at(suv);

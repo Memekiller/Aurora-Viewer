@@ -1882,15 +1882,9 @@ fn rain_wet_lamps(world: vec3<f32>, frag: vec2<f32>, n: vec3<f32>, view: vec3<f3
     return sum;
 }
 
-@fragment
-fn fs_rain_wet(in: RainWetOut) -> @location(0) vec4<f32> {
-    let uv = screen_uv(in.clip.xy);
-    let depth = scene_depth_at(uv);
-    if (depth <= 0.0) { discard; }
-    let world = world_from_depth(uv, depth);
-    let cam = frame.camera_pos.xyz;
-    if (world.z < frame.params.y) { discard; }
-    // the facing, from the nearer neighbour on each axis (no seams at edges)
+// The facing from the depth: the nearer neighbour on each axis (no seams
+// at edges). Flat on each triangle.
+fn rain_depth_normal(uv: vec2<f32>, world: vec3<f32>) -> vec3<f32> {
     let px = frame.screen.zw;
     let r0 = world_from_depth(uv + vec2<f32>(px.x, 0.0), scene_depth_at(uv + vec2<f32>(px.x, 0.0))) - world;
     let l0 = world - world_from_depth(uv - vec2<f32>(px.x, 0.0), scene_depth_at(uv - vec2<f32>(px.x, 0.0)));
@@ -1899,42 +1893,104 @@ fn fs_rain_wet(in: RainWetOut) -> @location(0) vec4<f32> {
     let dx = select(l0, r0, dot(r0, r0) < dot(l0, l0));
     let dy = select(u0, d0, dot(d0, d0) < dot(u0, u0));
     var n = normalize(cross(dx, dy));
-    if (dot(n, cam - world) < 0.0) { n = -n; }
+    if (dot(n, frame.camera_pos.xyz - world) < 0.0) { n = -n; }
+    return n;
+}
 
+// A surface in the rain. `n`: its smooth facing; `porosity` 0 (glass,
+// metal, polished stone: water stays on top, a mirror-like film) to 1
+// (grass, soil, cloth: water soaks in, darker and barely shinier), after
+// Lagarde's wet surfaces; `level_only`: the facing is only known per
+// triangle, so only near-level ground is drawn wet (no facets on avatars).
+fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f32>, porosity: f32, level_only: bool) -> vec4<f32> {
+    let cam = frame.camera_pos.xyz;
     let dist = distance(world, cam);
-    let up = smoothstep(0.5, 0.85, n.z);
+    let up = select(smoothstep(0.5, 0.85, n.z), smoothstep(0.95, 0.985, n.z), level_only);
     let open = 1.0 - rain_sheltered(world + n * 0.08);
     let heavy = frame.rain.x;
     let wet = up * open * (1.0 - smoothstep(28.0, 38.0, dist)) * smoothstep(0.0, 0.25, heavy);
-    if (wet < 0.01) { discard; }
+    if (wet < 0.01) { return vec4<f32>(0.0); }
 
     let view = normalize(cam - world);
     let base = textureSampleLevel(scene_tex, lin_clamp, uv, 0.0).rgb;
-    // puddles: low flat spots of a noise pattern, rippled by the drops
+    // puddles: low flat spots of a noise pattern; water only pools within
+    // about 8 degrees of level, and its surface is level whatever the ground
+    // below is shaped like, broken only by the ripples
     let shape = water_fx_noise(world.xy * 0.16) * 0.7 + water_fx_noise(world.xy * 0.55) * 0.3;
-    // water only pools where the ground is within about 8 degrees of level,
-    // and its surface is level whatever the ground below is shaped like:
-    // the puddle's facing is straight up, broken only by the ripples (the
-    // ground's triangles no longer show in it, and no rings on slopes)
     let pool_level = 0.66 - heavy * 0.12;
     let puddle = smoothstep(pool_level, pool_level + 0.08, shape) * smoothstep(0.985, 0.995, n.z);
     let ripple = rain_ripples(world.xy, frame.camera_pos.w) * puddle * sqrt(heavy);
     let np = normalize(vec3<f32>(ripple * 0.06, 1.0));
     let r = reflect(-view, np);
-    // damp (not pooled) ground: its own facing, half toward level
-    let nd = normalize(mix(n, vec3<f32>(0.0, 0.0, 1.0), 0.5));
-    let rd = reflect(-view, nd);
-    let fresnel_d = 0.02037 + 0.97963 * pow(1.0 - max(dot(nd, view), 0.0), 5.0);
     let fresnel = 0.02037 + 0.97963 * pow(1.0 - max(dot(np, view), 0.0), 5.0);
 
+    // damp: porous things darken, smooth ones gain a sheen
+    let rd = reflect(-view, n);
+    let fresnel_d = 0.02037 + 0.97963 * pow(1.0 - max(dot(n, view), 0.0), 5.0);
     let sky = sky_color(vec3<f32>(rd.xy, abs(rd.z)));
-    let damp = base * 0.58 + sky * fresnel_d * 0.35 + rain_wet_lamps(world, in.clip.xy, nd, view, 24.0) * 0.5;
+    let darken = mix(0.88, 0.55, porosity);
+    let sheen = mix(0.6, 0.12, porosity);
+    let shine = mix(80.0, 16.0, porosity);
+    let damp = base * darken + sky * fresnel_d * sheen + rain_wet_lamps(world, clip, n, view, shine) * sheen;
     var color = damp;
     if (puddle > 0.01) {
         let mirrored = rain_puddle_reflection(world + vec3<f32>(0.0, 0.0, 0.02), r);
-        let pool = mix(base * 0.3, mirrored, 0.35 + fresnel * 0.6) + rain_wet_lamps(world, in.clip.xy, np, view, 400.0);
+        let pool = mix(base * 0.3, mirrored, 0.35 + fresnel * 0.6) + rain_wet_lamps(world, clip, np, view, 400.0);
         color = mix(damp, pool, puddle);
     }
     let a = wet * mix(0.85, 1.0, puddle);
     return vec4<f32>(color * a, a);
+}
+
+// Without the G-buffer (screen-space reflections off): the depth's facing,
+// near-level ground only, a middling porosity.
+@fragment
+fn fs_rain_wet(in: RainWetOut) -> @location(0) vec4<f32> {
+    let uv = screen_uv(in.clip.xy);
+    let depth = scene_depth_at(uv);
+    if (depth <= 0.0) { discard; }
+    let world = world_from_depth(uv, depth);
+    if (world.z < frame.params.y) { discard; }
+    let out = rain_wet_surface(in.clip.xy, uv, world, rain_depth_normal(uv, world), 0.6, true);
+    if (out.a < 0.01) { discard; }
+    return out;
+}
+
+// With the G-buffer the screen-space reflections read (object.wgsl
+// `gbuffer`: the smooth, normal-mapped facing, roughness, metallic): the
+// real shape and material of every surface. Where nothing wrote it (its
+// clear value: up, rough, not metallic), the depth's facing as above.
+@group(3) @binding(0) var rain_gbuf: texture_2d<f32>;
+
+fn rain_oct_decode(e_in: vec2<f32>) -> vec3<f32> {
+    let e = e_in * 2.0 - vec2<f32>(1.0);
+    var n = vec3<f32>(e, 1.0 - abs(e.x) - abs(e.y));
+    if (n.z < 0.0) {
+        let s = select(vec2<f32>(-1.0), vec2<f32>(1.0), n.xy >= vec2<f32>(0.0));
+        n = vec3<f32>((vec2<f32>(1.0) - abs(n.yx)) * s, n.z);
+    }
+    return normalize(n);
+}
+
+@fragment
+fn fs_rain_wet_g(in: RainWetOut) -> @location(0) vec4<f32> {
+    let uv = screen_uv(in.clip.xy);
+    let depth = scene_depth_at(uv);
+    if (depth <= 0.0) { discard; }
+    let world = world_from_depth(uv, depth);
+    if (world.z < frame.params.y) { discard; }
+    let g = textureLoad(rain_gbuf, vec2<i32>(in.clip.xy), 0);
+    let cleared = abs(g.x - 0.5) < 0.004 && abs(g.y - 0.5) < 0.004 && g.z > 0.996 && g.w < 0.004;
+    var out: vec4<f32>;
+    if (cleared) {
+        out = rain_wet_surface(in.clip.xy, uv, world, rain_depth_normal(uv, world), 0.6, true);
+    } else {
+        var n = rain_oct_decode(g.xy);
+        if (dot(n, frame.camera_pos.xyz - world) < 0.0) { n = -n; }
+        // rough reads as porous; metal never soaks anything up
+        let porosity = clamp((g.z - 0.15) / 0.7, 0.0, 1.0) * (1.0 - g.w);
+        out = rain_wet_surface(in.clip.xy, uv, world, n, porosity, false);
+    }
+    if (out.a < 0.01) { discard; }
+    return out;
 }

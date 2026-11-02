@@ -895,6 +895,8 @@ struct Pipelines {
     rain: wgpu::RenderPipeline,
     /// Rain prototype's wet ground and puddles (`fs_rain_wet`).
     rain_wet: wgpu::RenderPipeline,
+    /// The same with the screen-space reflections' G-buffer (`fs_rain_wet_g`).
+    rain_wet_g: Option<wgpu::RenderPipeline>,
     glow: wgpu::RenderPipeline,
     /// `glow` clipped to the camera's side of the water (blended faces).
     glow_water: wgpu::RenderPipeline,
@@ -3621,6 +3623,28 @@ impl Backend {
             depth_compare: wgpu::CompareFunction::Always,
             ..base("rain wet ground", "vs_rain_wet", "fs_rain_wet")
         });
+        // the same reading the screen-space reflections' G-buffer (group 3)
+        let rain_wet_g = ssr.then(|| {
+            let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("rain wet ground (G-buffer)"),
+                bind_group_layouts: &[Some(frame_layout), None, None, Some(gbuf_layout)],
+                immediate_size: 0,
+            });
+            make_pipeline(
+                device,
+                &module,
+                &pl,
+                PipeDesc {
+                    vb: Vb::None,
+                    cull: None,
+                    blend: Some(suppress),
+                    write_mask: wgpu::ColorWrites::ALL,
+                    depth_write: false,
+                    depth_compare: wgpu::CompareFunction::Always,
+                    ..base("rain wet ground (G-buffer)", "vs_rain_wet", "fs_rain_wet_g")
+                },
+            )
+        });
         // LLDrawPoolGlow: glow faces again, adding texture alpha x glow to
         // the scene alpha only (depth tested, pulled toward the camera)
         let glow_desc = |label: &'static str, constants: &'static [(&'static str, f64)]| PipeDesc {
@@ -4108,6 +4132,7 @@ impl Backend {
             water_particles_under,
             rain,
             rain_wet,
+            rain_wet_g,
             glow,
             glow_water,
             glow_max,
@@ -7862,7 +7887,13 @@ impl Backend {
             // rain prototype: wet ground and puddles, under the transparent
             // things drawn after
             if rain_drops > 0 {
-                pass.set_pipeline(&self.pipelines.rain_wet);
+                match (&self.pipelines.rain_wet_g, &self.gbuf_group) {
+                    (Some(pipe), Some(gbg)) => {
+                        pass.set_pipeline(pipe);
+                        pass.set_bind_group(3, gbg, &[]);
+                    }
+                    _ => pass.set_pipeline(&self.pipelines.rain_wet),
+                }
                 pass.draw(0..3, 0..1);
             }
             pass_mark(&mut pass, MARK_SSR_END);

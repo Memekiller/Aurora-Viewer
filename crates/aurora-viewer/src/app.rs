@@ -9046,9 +9046,14 @@ impl App {
                 Vec::new()
             };
             self.scene.particles.sync_clouds(&clouds);
-            // Rain prototype: AURORA_RAIN=<0..1>, local only
+            // First rain prototype, on particles: AURORA_RAIN_PARTICLES=<0..1> (AURORA_RAIN is the GPU pass)
             static RAIN: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
-            let rain = *RAIN.get_or_init(|| std::env::var("AURORA_RAIN").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0));
+            let rain = *RAIN.get_or_init(|| {
+                std::env::var("AURORA_RAIN_PARTICLES")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0.0)
+            });
             let agent = (!self.world.agent_id.is_nil()).then_some(self.world.agent_id);
             self.scene.particles.sync_rain(agent, rain);
             self.scene.drop_rez_clouds(&self.world);

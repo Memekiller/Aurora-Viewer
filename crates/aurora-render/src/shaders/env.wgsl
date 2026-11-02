@@ -1618,3 +1618,111 @@ fn fs_water_particle_under(in: WaterParticleOut) -> @location(0) vec4<f32> {
     if(camera_underwater() || in.world.z>=in.level){discard;}
     return water_particle_color(in);
 }
+
+// ------------------------------------------------------------ rain (prototype)
+// Drops are not simulated: each instance has a fixed random place in a box
+// around the camera, falls at its own steady speed and wraps around the box,
+// so rain reaches as far as the box everywhere the camera looks. Streaks bend
+// the scene behind them (scene_tex), reflect the sky at grazing angles and
+// glint against the sun; they fade into geometry, near the lens and toward
+// the box's edges, so the wrap never shows.
+
+const RAIN_BOX: vec3<f32> = vec3<f32>(44.0, 44.0, 30.0);
+const RAIN_WIND: vec2<f32> = vec2<f32>(1.1, 0.4);
+
+struct RainOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) world: vec3<f32>,
+    @location(1) uv: vec2<f32>,
+    @location(2) side: vec3<f32>,
+    @location(3) life: f32,
+}
+
+fn rain_hash(n: u32) -> u32 {
+    var x = n * 747796405u + 2891336453u;
+    x = ((x >> ((x >> 28u) + 4u)) ^ x) * 277803737u;
+    return (x >> 22u) ^ x;
+}
+
+fn rain_rand(n: u32) -> f32 {
+    return f32(rain_hash(n) & 0x00ffffffu) / 16777216.0;
+}
+
+@vertex
+fn vs_rain(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32) -> RainOut {
+    let seed = instance * 4u;
+    let base = vec3<f32>(rain_rand(seed), rain_rand(seed + 1u), rain_rand(seed + 2u)) * RAIN_BOX;
+    let speed = 8.0 + rain_rand(seed + 3u) * 3.0;
+    let time = frame.camera_pos.w;
+    let velocity = vec3<f32>(RAIN_WIND * (0.8 + speed * 0.04), -speed);
+    // the box is centered on the camera, a little above it; drops keep their
+    // world place (parallax) and wrap through its faces
+    let cam = frame.camera_pos.xyz;
+    let corner = cam - RAIN_BOX * vec3<f32>(0.5, 0.5, 0.35);
+    let moved = base + velocity * time;
+    let pos = corner + (moved - corner - floor((moved - corner) / RAIN_BOX) * RAIN_BOX);
+
+    // a streak: the distance fallen in about 1/30 s, a few millimeters wide,
+    // turned around its own axis toward the camera
+    let axis = normalize(velocity);
+    let to_cam = cam - pos;
+    let dist = length(to_cam);
+    let side = normalize(cross(axis, to_cam / max(dist, 0.001)) + vec3<f32>(1e-5, 0.0, 0.0));
+    let length_m = speed * 0.035;
+    let width = 0.0045 + dist * 0.0006;
+    let corners = array<vec2<f32>, 6>(
+        vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0),
+        vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(-1.0, 1.0));
+    let c = corners[vertex % 6u];
+    let world = pos + side * c.x * width + axis * c.y * length_m * 0.5;
+
+    // fades: right in front of the lens, and toward the box's faces
+    let local = abs(pos - (cam + RAIN_BOX * vec3<f32>(0.0, 0.0, 0.15))) / (RAIN_BOX * 0.5);
+    let edge = max(max(local.x, local.y), local.z);
+    var life = smoothstep(0.35, 1.6, dist) * (1.0 - smoothstep(0.62, 0.95, edge));
+
+    var out: RainOut;
+    out.clip = frame.view_proj * vec4<f32>(world, 1.0);
+    out.world = world;
+    out.uv = c;
+    out.side = side;
+    out.life = life;
+    return out;
+}
+
+@fragment
+fn fs_rain(in: RainOut) -> @location(0) vec4<f32> {
+    if (in.life <= 0.001) { discard; }
+    // a thin cylinder of water seen from the side: its normal sweeps from
+    // the side to the camera across the streak; its ends taper
+    let across = in.uv.x;
+    let r = 1.0 - across * across;
+    if (r <= 0.0) { discard; }
+    let view = normalize(frame.camera_pos.xyz - in.world);
+    let normal = normalize(in.side * across + view * sqrt(r));
+    let taper = 1.0 - smoothstep(0.55, 1.0, abs(in.uv.y));
+    let fresnel = 0.02037 + 0.97963 * pow(1.0 - max(dot(normal, view), 0.0), 5.0);
+
+    // what is behind, bent through the drop
+    let suv = screen_uv(in.clip.xy);
+    let bend = vec2<f32>(dot(normal, frame.cam_right.xyz), -dot(normal, frame.cam_up.xyz)) * 0.012;
+    let transmitted = textureSampleLevel(scene_tex, lin_clamp, clamp(suv + bend, vec2<f32>(0.001), vec2<f32>(0.999)), 0.0).rgb;
+    // the sky it reflects, and the sun shining through it from behind
+    let reflection = reflect(-view, normal);
+    let reflected = sky_color(vec3<f32>(reflection.xy, abs(reflection.z)));
+    let toward_sun = max(dot(-view, frame.sun_dir.xyz), 0.0);
+    let glint = frame.sun_color.rgb * frame.sun_dir.w * (pow(toward_sun, 12.0) * 2.5 + pow(toward_sun, 3.0) * 0.25);
+    let ambient = frame.sky_horizon.rgb * 0.12;
+    let color = mix(transmitted * 1.04, reflected, fresnel) + (glint + ambient) * (0.35 + fresnel);
+
+    var alpha = taper * sqrt(r) * (0.22 + fresnel * 0.55) * in.life;
+    // soft where a drop meets the ground or a wall behind it
+    let depth = scene_depth_at(suv);
+    if (depth > 0.0) {
+        let behind = world_from_depth(suv, depth);
+        let cam = frame.camera_pos.xyz;
+        alpha *= clamp((distance(behind, cam) - distance(in.world, cam)) / 0.25, 0.0, 1.0);
+    }
+    if (alpha < 0.003) { discard; }
+    return vec4<f32>(apply_fog(color, in.world) * alpha, alpha);
+}

@@ -855,6 +855,8 @@ struct Pipelines {
     particles: wgpu::RenderPipeline,
     water_particles: wgpu::RenderPipeline,
     water_particles_under: wgpu::RenderPipeline,
+    /// Rain prototype (`vs_rain` in env.wgsl, `AURORA_RAIN`).
+    rain: wgpu::RenderPipeline,
     glow: wgpu::RenderPipeline,
     /// `glow` clipped to the camera's side of the water (blended faces).
     glow_water: wgpu::RenderPipeline,
@@ -1922,6 +1924,15 @@ fn begin_scene_b_on<'a>(
         timestamp_writes: None,
         occlusion_query_set: None,
         multiview_mask: None,
+    })
+}
+
+/// Rain prototype: `AURORA_RAIN=<0..1>`, read once; 1 is 30,000 drops.
+fn rain_drops() -> u32 {
+    static DROPS: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *DROPS.get_or_init(|| {
+        let intensity: f32 = std::env::var("AURORA_RAIN").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+        (intensity.clamp(0.0, 1.0) * 30_000.0) as u32
     })
 }
 
@@ -3546,6 +3557,15 @@ impl Backend {
             depth_compare: wgpu::CompareFunction::Greater,
             ..base("submerged water particles", "vs_water_particle", "fs_water_particle_under")
         });
+        let rain = pipe(PipeDesc {
+            vb: Vb::None,
+            cull: None,
+            blend: Some(suppress),
+            write_mask: wgpu::ColorWrites::ALL,
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::Greater,
+            ..base("rain", "vs_rain", "fs_rain")
+        });
         // LLDrawPoolGlow: glow faces again, adding texture alpha x glow to
         // the scene alpha only (depth tested, pulled toward the camera)
         let glow_desc = |label: &'static str, constants: &'static [(&'static str, f64)]| PipeDesc {
@@ -4031,6 +4051,7 @@ impl Backend {
             particles,
             water_particles,
             water_particles_under,
+            rain,
             glow,
             glow_water,
             glow_max,
@@ -7568,6 +7589,7 @@ impl Backend {
                 .encode(&self.device, &mut encoder, color, depth, HDR_FORMAT, samples);
         }
         let water_particles = if f.cutout { 0 } else { self.water_effects.particles };
+        let rain_drops = if f.cutout { 0 } else { rain_drops() };
         if water_particles > 0 && above_water_possible {
             let mut pass = begin_scene_b(&mut encoder, &self.targets, "submerged water particles", false, false);
             bind_mesh(&mut pass, &self.groups.a);
@@ -7760,6 +7782,10 @@ impl Backend {
             if water_particles > 0 {
                 pass.set_pipeline(&self.pipelines.water_particles);
                 pass.draw(0..crate::water_effects::WATER_PARTICLE_VERTICES, 0..water_particles);
+            }
+            if rain_drops > 0 {
+                pass.set_pipeline(&self.pipelines.rain);
+                pass.draw(0..6, 0..rain_drops);
             }
             // particles last: they rebind vertex buffer 0
             if n_particles > 0 {

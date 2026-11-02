@@ -1690,6 +1690,28 @@ fn vs_rain(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance
     return out;
 }
 
+// How much a point is under cover: 1 under a roof, a tree or the ground, 0
+// in the open. The shelter map is the last projector map when no projector
+// takes it (renderer.rs, RAIN_SHELTER_MAP), seen straight down; outside it,
+// or when a projector has it, nothing shelters.
+fn rain_sheltered(world: vec3<f32>) -> f32 {
+    if (frame.spot_lights.y != -1) { return 0.0; }
+    let lp = frame.spot_vp[1] * vec4<f32>(world, 1.0);
+    if (lp.w < 0.5) { return 0.0; }
+    let ndc = lp.xyz / lp.w;
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || ndc.z < 0.0 || ndc.z > 1.0) { return 0.0; }
+    let texel = 4.0 / f32(textureDimensions(shadow_map).x);
+    let origin = vec2<f32>(0.75, 0.5);
+    var open = 0.0;
+    let taps = array<vec2<f32>, 4>(vec2<f32>(-0.5, -0.5), vec2<f32>(0.5, -0.5), vec2<f32>(-0.5, 0.5), vec2<f32>(0.5, 0.5));
+    for (var i = 0; i < 4; i++) {
+        let at = clamp(uv + taps[i] * texel, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
+        open += textureSampleCompareLevel(shadow_map, shadow_sampler, origin + at * 0.25, ndc.z - 0.0005);
+    }
+    return 1.0 - open * 0.25;
+}
+
 @fragment
 fn fs_rain(in: RainOut) -> @location(0) vec4<f32> {
     if (in.life <= 0.001) { discard; }
@@ -1716,6 +1738,7 @@ fn fs_rain(in: RainOut) -> @location(0) vec4<f32> {
     let color = mix(transmitted * 1.04, reflected, fresnel) + (glint + ambient) * (0.35 + fresnel);
 
     var alpha = taper * sqrt(r) * (0.22 + fresnel * 0.55) * in.life;
+    alpha *= 1.0 - rain_sheltered(in.world);
     // soft where a drop meets the ground or a wall behind it
     let depth = scene_depth_at(suv);
     if (depth > 0.0) {

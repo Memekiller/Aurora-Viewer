@@ -448,11 +448,45 @@ impl Smaa {
 /// that casts shadows, with the view-projection of its map. None without
 /// shadows (reflections, probe faces and impostor pictures draw none).
 fn spot_shadow_views(f: &FrameParams) -> [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] {
-    f.spot_shadows.map(|s| {
+    let mut views = f.spot_shadows.map(|s| {
         let s = s.filter(|_| f.shadows)?;
         let light = f.lights.get(s.light as usize).filter(|_| (s.light as usize) < MAX_LIGHTS)?;
         Some((s, light.projector?.shadow_matrix))
-    })
+    });
+    // Rain prototype: a free last map becomes the shelter map, the depth of
+    // what is overhead seen straight down. No light uses it (light -1).
+    if f.shadows && rain_drops() > 0 && views[RAIN_SHELTER_MAP].is_none() {
+        views[RAIN_SHELTER_MAP] = Some((
+            SpotShadow {
+                light: u32::MAX,
+                fade: 0.0,
+            },
+            rain_shelter_matrix(f.camera_pos),
+        ));
+    }
+    views
+}
+
+/// Projector map slot the rain prototype takes for its shelter map
+/// (`rain_sheltered` in env.wgsl).
+const RAIN_SHELTER_MAP: usize = SPOT_SHADOWS - 1;
+
+/// The shelter map: 80 m square around the camera, from 60 m above it to
+/// 60 m below, looking straight down; snapped to whole metres so that its
+/// texels do not crawl as the camera moves.
+fn rain_shelter_matrix(camera: Vec3) -> Mat4 {
+    // looking down -Z with +Y up, the view is a plain translation; the
+    // orthographic projection (right-handed, depth 0 at the top to 1 at
+    // the bottom, like the projectors' maps) then scales it
+    const HALF: f32 = 40.0;
+    const DEPTH: f32 = 120.0;
+    let (cx, cy, top) = (camera.x.round(), camera.y.round(), camera.z.round() + DEPTH * 0.5);
+    Mat4::from_cols(
+        Vec4::new(1.0 / HALF, 0.0, 0.0, 0.0),
+        Vec4::new(0.0, 1.0 / HALF, 0.0, 0.0),
+        Vec4::new(0.0, 0.0, -1.0 / DEPTH, 0.0),
+        Vec4::new(-cx / HALF, -cy / HALF, top / DEPTH, 1.0),
+    )
 }
 
 /// Screen-space glow as LLPipeline::generateGlow / combineGlow (originally LGPL 2.1,

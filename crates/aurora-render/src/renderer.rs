@@ -891,6 +891,8 @@ struct Pipelines {
     water_particles_under: wgpu::RenderPipeline,
     /// Rain prototype (`vs_rain` in env.wgsl, `AURORA_RAIN`).
     rain: wgpu::RenderPipeline,
+    /// Rain prototype's wet ground and puddles (`fs_rain_wet`).
+    rain_wet: wgpu::RenderPipeline,
     glow: wgpu::RenderPipeline,
     /// `glow` clipped to the camera's side of the water (blended faces).
     glow_water: wgpu::RenderPipeline,
@@ -3600,6 +3602,15 @@ impl Backend {
             depth_compare: wgpu::CompareFunction::Greater,
             ..base("rain", "vs_rain", "fs_rain")
         });
+        let rain_wet = pipe(PipeDesc {
+            vb: Vb::None,
+            cull: None,
+            blend: Some(suppress),
+            write_mask: wgpu::ColorWrites::ALL,
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::Always,
+            ..base("rain wet ground", "vs_rain_wet", "fs_rain_wet")
+        });
         // LLDrawPoolGlow: glow faces again, adding texture alpha x glow to
         // the scene alpha only (depth tested, pulled toward the camera)
         let glow_desc = |label: &'static str, constants: &'static [(&'static str, f64)]| PipeDesc {
@@ -4086,6 +4097,7 @@ impl Backend {
             water_particles,
             water_particles_under,
             rain,
+            rain_wet,
             glow,
             glow_water,
             glow_max,
@@ -7834,6 +7846,12 @@ impl Backend {
             if let (Some(ssr), Some(gbg)) = (&self.pipelines.ssr, &self.gbuf_group) {
                 pass.set_pipeline(ssr);
                 pass.set_bind_group(3, gbg, &[]);
+                pass.draw(0..3, 0..1);
+            }
+            // rain prototype: wet ground and puddles, under the transparent
+            // things drawn after
+            if rain_drops > 0 {
+                pass.set_pipeline(&self.pipelines.rain_wet);
                 pass.draw(0..3, 0..1);
             }
             pass_mark(&mut pass, MARK_SSR_END);

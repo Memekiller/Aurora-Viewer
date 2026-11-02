@@ -1771,3 +1771,134 @@ fn fs_rain(in: RainOut) -> @location(0) vec4<f32> {
     if (alpha < 0.003) { discard; }
     return vec4<f32>(apply_fog(color, in.world) * alpha, alpha);
 }
+
+// --------------------------------------------------- wet ground (prototype)
+// A screen pass over what scene pass A drew: each pixel's place and facing
+// come from the depth prepass; where it faces up and the shelter map sees it
+// open to the sky, it is drawn wet: darker, with the sky in it. Flat spots of
+// a noise pattern collect puddles: mirrors for the sky and the lamps, broken
+// by ripple rings.
+
+struct RainWetOut {
+    @builtin(position) clip: vec4<f32>,
+}
+
+@vertex
+fn vs_rain_wet(@builtin(vertex_index) vertex: u32) -> RainWetOut {
+    let p = vec2<f32>(f32((vertex << 1u) & 2u), f32(vertex & 2u));
+    var out: RainWetOut;
+    out.clip = vec4<f32>(p * 2.0 - 1.0, 0.0, 1.0);
+    return out;
+}
+
+// Ripple rings: one drop per 0.6 m cell, every 0.9 s at a random time and
+// place; the normal tilts across each ring's expanding crest.
+fn rain_ripples(xy: vec2<f32>, time: f32) -> vec2<f32> {
+    let cell = 0.6;
+    let base = floor(xy / cell);
+    var slope = vec2<f32>(0.0);
+    for (var j = -1; j <= 1; j++) {
+        for (var i = -1; i <= 1; i++) {
+            let c = base + vec2<f32>(f32(i), f32(j));
+            let seed = u32(i32(c.x) * 73856093) ^ u32(i32(c.y) * 19349663);
+            let offset = vec2<f32>(rain_rand(seed), rain_rand(seed + 1u));
+            let phase = time / 0.9 + rain_rand(seed + 2u);
+            let age = fract(phase);
+            let centre = (c + offset) * cell;
+            let d = xy - centre;
+            let dist = length(d);
+            let radius = age * 0.35;
+            let ring = exp(-pow((dist - radius) * 28.0, 2.0)) * (1.0 - age);
+            slope += d / max(dist, 1e-4) * ring * sin((dist - radius) * 60.0);
+        }
+    }
+    return slope;
+}
+
+// What a puddle mirrors along `r`: a short march through the depth prepass,
+// the scene copy where the ray passes behind something, else the sky.
+fn rain_puddle_reflection(world: vec3<f32>, r: vec3<f32>) -> vec3<f32> {
+    let cam = frame.camera_pos.xyz;
+    var t = 0.2;
+    for (var k = 0; k < 16; k++) {
+        let p = world + r * t;
+        let clip = frame.view_proj * vec4<f32>(p, 1.0);
+        if (clip.w <= 0.0) { break; }
+        let ndc = clip.xy / clip.w;
+        let suv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+        if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0) { break; }
+        let d = scene_depth_at(suv);
+        if (d > 0.0) {
+            let behind = world_from_depth(suv, d);
+            let gap = distance(p, cam) - distance(behind, cam);
+            if (gap > 0.0 && gap < t * 0.4 + 0.3) {
+                return textureSampleLevel(scene_tex, lin_clamp, suv, 0.0).rgb;
+            }
+        }
+        t *= 1.32;
+    }
+    return sky_color(vec3<f32>(r.xy, abs(r.z)));
+}
+
+// Lamps in wet ground: a highlight per point light, sharp in puddles.
+fn rain_wet_lamps(world: vec3<f32>, frag: vec2<f32>, n: vec3<f32>, view: vec3<f32>, power: f32) -> vec3<f32> {
+    var lights = light_walk(world, frag);
+    var sum = vec3<f32>(0.0);
+    for (var i = next_light(&lights); i >= 0; i = next_light(&lights)) {
+        let lt = frame.lights[i];
+        let to_l = lt.pos_radius.xyz - world;
+        let dist = length(to_l);
+        if (dist >= lt.pos_radius.w) { continue; }
+        let atten = ll_light_atten(dist / lt.pos_radius.w, lt.color_falloff.w);
+        let h = normalize(to_l / max(dist, 1e-4) + view);
+        sum += lt.color_falloff.rgb * atten * pow(max(dot(n, h), 0.0), power) * (power / 40.0);
+    }
+    return sum;
+}
+
+@fragment
+fn fs_rain_wet(in: RainWetOut) -> @location(0) vec4<f32> {
+    let uv = screen_uv(in.clip.xy);
+    let depth = scene_depth_at(uv);
+    if (depth <= 0.0) { discard; }
+    let world = world_from_depth(uv, depth);
+    let cam = frame.camera_pos.xyz;
+    if (world.z < frame.params.y) { discard; }
+    // the facing, from the nearer neighbour on each axis (no seams at edges)
+    let px = frame.screen.zw;
+    let r0 = world_from_depth(uv + vec2<f32>(px.x, 0.0), scene_depth_at(uv + vec2<f32>(px.x, 0.0))) - world;
+    let l0 = world - world_from_depth(uv - vec2<f32>(px.x, 0.0), scene_depth_at(uv - vec2<f32>(px.x, 0.0)));
+    let d0 = world_from_depth(uv + vec2<f32>(0.0, px.y), scene_depth_at(uv + vec2<f32>(0.0, px.y))) - world;
+    let u0 = world - world_from_depth(uv - vec2<f32>(0.0, px.y), scene_depth_at(uv - vec2<f32>(0.0, px.y)));
+    let dx = select(l0, r0, dot(r0, r0) < dot(l0, l0));
+    let dy = select(u0, d0, dot(d0, d0) < dot(u0, u0));
+    var n = normalize(cross(dx, dy));
+    if (dot(n, cam - world) < 0.0) { n = -n; }
+
+    let dist = distance(world, cam);
+    let up = smoothstep(0.5, 0.85, n.z);
+    let open = 1.0 - rain_sheltered(world + n * 0.08);
+    let wet = up * open * (1.0 - smoothstep(28.0, 38.0, dist));
+    if (wet < 0.01) { discard; }
+
+    let view = normalize(cam - world);
+    let base = textureSampleLevel(scene_tex, lin_clamp, uv, 0.0).rgb;
+    // puddles: low flat spots of a noise pattern, rippled by the drops
+    let shape = water_fx_noise(world.xy * 0.16) * 0.7 + water_fx_noise(world.xy * 0.55) * 0.3;
+    let puddle = smoothstep(0.56, 0.64, shape) * smoothstep(0.93, 0.985, n.z);
+    let ripple = rain_ripples(world.xy, frame.camera_pos.w) * puddle;
+    let np = normalize(vec3<f32>(n.xy + ripple * 0.06, n.z));
+    let r = reflect(-view, np);
+    let fresnel = 0.02037 + 0.97963 * pow(1.0 - max(dot(np, view), 0.0), 5.0);
+
+    let sky = sky_color(vec3<f32>(r.xy, abs(r.z)));
+    let damp = base * 0.58 + sky * fresnel * 0.35 + rain_wet_lamps(world, in.clip.xy, n, view, 60.0) * 0.5;
+    var color = damp;
+    if (puddle > 0.01) {
+        let mirrored = rain_puddle_reflection(world + np * 0.02, r);
+        let pool = mix(base * 0.3, mirrored, 0.35 + fresnel * 0.6) + rain_wet_lamps(world, in.clip.xy, np, view, 400.0);
+        color = mix(damp, pool, puddle);
+    }
+    let a = wet * mix(0.85, 1.0, puddle);
+    return vec4<f32>(color * a, a);
+}

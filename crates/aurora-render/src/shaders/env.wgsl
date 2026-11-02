@@ -1662,13 +1662,13 @@ fn vs_rain(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance
     let moved = base + velocity * time;
     let pos = corner + (moved - corner - floor((moved - corner) / RAIN_BOX) * RAIN_BOX);
 
-    // a streak: the distance fallen in about 1/30 s, a few millimeters wide,
+    // a streak: the distance fallen in about 1/16 s, a few millimeters wide,
     // turned around its own axis toward the camera
     let axis = normalize(velocity);
     let to_cam = cam - pos;
     let dist = length(to_cam);
     let side = normalize(cross(axis, to_cam / max(dist, 0.001)) + vec3<f32>(1e-5, 0.0, 0.0));
-    let length_m = speed * 0.035;
+    let length_m = speed * 0.062;
     let width = 0.0045 + dist * 0.0006;
     let corners = array<vec2<f32>, 6>(
         vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0),

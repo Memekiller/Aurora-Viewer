@@ -102,6 +102,36 @@ fn cloud_data(avatar: Uuid) -> ps::PartSysData {
     d
 }
 
+/// Key of the local rain source (prototype): beside every object's own.
+const RAIN_KEY: Uuid = Uuid::from_u128(0x5241_494e_5241_494e_5241_494e_5241_494e);
+
+/// Rain (prototype, local only): drops born on a dome 18 m around the
+/// avatar, falling fast, stretched along their motion and pushed by the
+/// region's wind. `intensity` 0–1 sets how many fall.
+fn rain_data(intensity: f32) -> ps::PartSysData {
+    let mut d = ps::PartSysData {
+        flags: ps::LL_PART_USE_NEW_ANGLE,
+        pattern: ps::LL_PART_SRC_PATTERN_ANGLE_CONE,
+        max_age: 0.0,
+        inner_angle: 0.0,
+        outer_angle: 1.4,
+        burst_rate: 0.02,
+        burst_part_count: (intensity.clamp(0.0, 1.0) * 60.0).round().max(1.0) as u8,
+        burst_radius: 18.0,
+        burst_speed_min: 0.0,
+        burst_speed_max: 0.0,
+        part_accel: Vec3::new(0.0, 0.0, -25.0),
+        ..Default::default()
+    };
+    d.part.max_age = 1.4;
+    d.part.start_color = [0.78, 0.82, 0.9, 0.45];
+    d.part.end_color = [0.78, 0.82, 0.9, 0.3];
+    d.part.start_scale = glam::Vec2::new(0.03125, 0.35);
+    d.part.end_scale = glam::Vec2::new(0.03125, 0.7);
+    d.part.flags = ps::LL_PART_FOLLOW_VELOCITY_MASK | ps::LL_PART_WIND_MASK | ps::LL_PART_INTERP_COLOR_MASK | ps::LL_PART_INTERP_SCALE_MASK;
+    d
+}
+
 #[derive(Default)]
 pub struct ParticleManager {
     sources: HashMap<Uuid, Source>,
@@ -149,7 +179,7 @@ impl ParticleManager {
     /// Clouds around the avatars still loading; the others stop emitting.
     pub fn sync_clouds(&mut self, avatars: &[Uuid]) {
         for (id, s) in self.sources.iter_mut() {
-            if s.cloud && !avatars.contains(id) {
+            if s.cloud && *id != RAIN_KEY && !avatars.contains(id) {
                 s.ps.stop();
             }
         }
@@ -170,6 +200,38 @@ impl ParticleManager {
                     emitter: *id,
                 },
             );
+        }
+    }
+
+    /// Rain around `avatar` (prototype): a local source beside the objects'
+    /// own; `intensity` 0 lets the drops in the air finish their fall.
+    pub fn sync_rain(&mut self, avatar: Option<Uuid>, intensity: f32) {
+        match (avatar.filter(|_| intensity > 0.0), self.sources.get_mut(&RAIN_KEY)) {
+            (Some(avatar), Some(s)) => {
+                if s.emitter != avatar || s.ps.data().burst_part_count != rain_data(intensity).burst_part_count {
+                    s.emitter = avatar;
+                    s.object = avatar;
+                    s.ps.set_data(rain_data(intensity));
+                }
+            }
+            (Some(avatar), None) => {
+                self.seed = self.seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+                self.sources.insert(
+                    RAIN_KEY,
+                    Source {
+                        ps: ParticleSource::new(rain_data(intensity), self.seed),
+                        texture: Uuid::nil(),
+                        slot: 0,
+                        // not a cloud, but local like one: no owner filters
+                        cloud: true,
+                        owner: Uuid::nil(),
+                        object: avatar,
+                        emitter: avatar,
+                    },
+                );
+            }
+            (None, Some(s)) => s.ps.stop(),
+            (None, None) => {}
         }
     }
 

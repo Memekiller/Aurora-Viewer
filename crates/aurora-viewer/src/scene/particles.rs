@@ -102,33 +102,56 @@ fn cloud_data(avatar: Uuid) -> ps::PartSysData {
     d
 }
 
-/// Key of the local rain source (prototype): beside every object's own.
-const RAIN_KEY: Uuid = Uuid::from_u128(0x5241_494e_5241_494e_5241_494e_5241_494e);
+/// Layers of the rain prototype: near, middle and far shells, each with its
+/// share of the drops, its radius and how bright its streaks are.
+const RAIN_LAYERS: [(f32, f32, f32); 3] = [(0.45, 7.0, 0.55), (0.35, 15.0, 0.38), (0.2, 26.0, 0.22)];
 
-/// Rain (prototype, local only): drops born on a dome 18 m around the
-/// avatar, falling fast, stretched along their motion and pushed by the
-/// region's wind. `intensity` 0–1 sets how many fall.
-fn rain_data(intensity: f32) -> ps::PartSysData {
+/// Keys of the local rain sources (prototype): beside every object's own.
+fn rain_key(layer: usize) -> Uuid {
+    Uuid::from_u128(0x5241_494e_5241_494e_5241_494e_5241_4900 + layer as u128)
+}
+
+fn is_rain(id: &Uuid) -> bool {
+    (0..RAIN_LAYERS.len()).any(|l| *id == rain_key(l))
+}
+
+/// Rain (prototype, local only): drops born on shells around the camera,
+/// falling fast, stretched along their motion and pushed by the region's
+/// wind. They add light rather than paint (additive, a little glow), so they
+/// glint against dark ground and fade against a bright sky. `intensity` 0–1.
+fn rain_data(intensity: f32, layer: usize) -> ps::PartSysData {
+    let (share, radius, brightness) = RAIN_LAYERS[layer];
     let mut d = ps::PartSysData {
         flags: ps::LL_PART_USE_NEW_ANGLE,
         pattern: ps::LL_PART_SRC_PATTERN_ANGLE_CONE,
         max_age: 0.0,
         inner_angle: 0.0,
-        outer_angle: 1.4,
+        outer_angle: 1.25,
         burst_rate: 0.02,
-        burst_part_count: (intensity.clamp(0.0, 1.0) * 60.0).round().max(1.0) as u8,
-        burst_radius: 18.0,
+        burst_part_count: (intensity.clamp(0.0, 1.0) * 70.0 * share).round().max(1.0) as u8,
+        burst_radius: radius,
         burst_speed_min: 0.0,
         burst_speed_max: 0.0,
         part_accel: Vec3::new(0.0, 0.0, -25.0),
         ..Default::default()
     };
-    d.part.max_age = 1.4;
-    d.part.start_color = [0.78, 0.82, 0.9, 0.45];
-    d.part.end_color = [0.78, 0.82, 0.9, 0.3];
-    d.part.start_scale = glam::Vec2::new(0.03125, 0.35);
-    d.part.end_scale = glam::Vec2::new(0.03125, 0.7);
-    d.part.flags = ps::LL_PART_FOLLOW_VELOCITY_MASK | ps::LL_PART_WIND_MASK | ps::LL_PART_INTERP_COLOR_MASK | ps::LL_PART_INTERP_SCALE_MASK;
+    // long enough to fall the whole shell's height
+    d.part.max_age = (2.0 * radius / 25.0).sqrt() + 0.2;
+    let c = [0.62 * brightness, 0.68 * brightness, 0.8 * brightness];
+    d.part.start_color = [c[0], c[1], c[2], 1.0];
+    d.part.end_color = [c[0] * 0.6, c[1] * 0.6, c[2] * 0.6, 1.0];
+    d.part.start_scale = glam::Vec2::new(0.03125, 0.3);
+    d.part.end_scale = glam::Vec2::new(0.03125, 0.75);
+    d.part.start_glow = 0.12 * brightness;
+    d.part.end_glow = 0.0;
+    d.part.blend_func_source = ps::LL_PART_BF_SOURCE_ALPHA;
+    d.part.blend_func_dest = ps::LL_PART_BF_ONE;
+    d.part.flags = ps::LL_PART_FOLLOW_VELOCITY_MASK
+        | ps::LL_PART_WIND_MASK
+        | ps::LL_PART_INTERP_COLOR_MASK
+        | ps::LL_PART_INTERP_SCALE_MASK
+        | ps::LL_PART_DATA_GLOW
+        | ps::LL_PART_DATA_BLEND;
     d
 }
 
@@ -179,7 +202,7 @@ impl ParticleManager {
     /// Clouds around the avatars still loading; the others stop emitting.
     pub fn sync_clouds(&mut self, avatars: &[Uuid]) {
         for (id, s) in self.sources.iter_mut() {
-            if s.cloud && *id != RAIN_KEY && !avatars.contains(id) {
+            if s.cloud && !is_rain(id) && !avatars.contains(id) {
                 s.ps.stop();
             }
         }
@@ -206,32 +229,35 @@ impl ParticleManager {
     /// Rain around `avatar` (prototype): a local source beside the objects'
     /// own; `intensity` 0 lets the drops in the air finish their fall.
     pub fn sync_rain(&mut self, avatar: Option<Uuid>, intensity: f32) {
-        match (avatar.filter(|_| intensity > 0.0), self.sources.get_mut(&RAIN_KEY)) {
-            (Some(avatar), Some(s)) => {
-                if s.emitter != avatar || s.ps.data().burst_part_count != rain_data(intensity).burst_part_count {
-                    s.emitter = avatar;
-                    s.object = avatar;
-                    s.ps.set_data(rain_data(intensity));
+        for layer in 0..RAIN_LAYERS.len() {
+            let key = rain_key(layer);
+            match (avatar.filter(|_| intensity > 0.0), self.sources.get_mut(&key)) {
+                (Some(avatar), Some(s)) => {
+                    if s.emitter != avatar || s.ps.data().burst_part_count != rain_data(intensity, layer).burst_part_count {
+                        s.emitter = avatar;
+                        s.object = avatar;
+                        s.ps.set_data(rain_data(intensity, layer));
+                    }
                 }
+                (Some(avatar), None) => {
+                    self.seed = self.seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+                    self.sources.insert(
+                        key,
+                        Source {
+                            ps: ParticleSource::new(rain_data(intensity, layer), self.seed),
+                            texture: Uuid::nil(),
+                            slot: 0,
+                            // not a cloud, but local like one: no owner filters
+                            cloud: true,
+                            owner: Uuid::nil(),
+                            object: avatar,
+                            emitter: avatar,
+                        },
+                    );
+                }
+                (None, Some(s)) => s.ps.stop(),
+                (None, None) => {}
             }
-            (Some(avatar), None) => {
-                self.seed = self.seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
-                self.sources.insert(
-                    RAIN_KEY,
-                    Source {
-                        ps: ParticleSource::new(rain_data(intensity), self.seed),
-                        texture: Uuid::nil(),
-                        slot: 0,
-                        // not a cloud, but local like one: no owner filters
-                        cloud: true,
-                        owner: Uuid::nil(),
-                        object: avatar,
-                        emitter: avatar,
-                    },
-                );
-            }
-            (None, Some(s)) => s.ps.stop(),
-            (None, None) => {}
         }
     }
 
@@ -482,7 +508,12 @@ impl ParticleManager {
             // a new one would burst at every frame, LL's first run)
             let held = frozen && !s.cloud;
             let dt = if held { 0.0 } else { dt };
-            let transform = idx.and_then(|i| Scene::object_transform(world, i, now, 0));
+            // the rain prototype rains around the camera, wherever it looks
+            let transform = if is_rain(id) {
+                Some((eye, glam::Quat::IDENTITY, false))
+            } else {
+                idx.and_then(|i| Scene::object_transform(world, i, now, 0))
+            };
             let Some((pos, rot, hud)) = transform else {
                 // object gone: stop emitting, let the particles live out
                 s.ps.stop();

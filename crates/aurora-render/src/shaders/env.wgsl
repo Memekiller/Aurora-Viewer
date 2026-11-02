@@ -1629,6 +1629,17 @@ fn fs_water_particle_under(in: WaterParticleOut) -> @location(0) vec4<f32> {
 
 const RAIN_BOX: vec3<f32> = vec3<f32>(44.0, 44.0, 30.0);
 const RAIN_WIND: vec2<f32> = vec2<f32>(1.1, 0.4);
+// How long the eye smears a drop into a streak (s).
+const RAIN_EXPOSURE: f32 = 0.05;
+// Drops are never drawn thinner than this many pixels (they fade instead).
+const RAIN_MIN_PX: f32 = 1.3;
+
+// Prototype tuning: the drops' speed relative to the real one
+// (renderer.rs, AURORA_RAIN_SPEED).
+override rain_speed: f32 = 1.0;
+fn rain_speed_scale() -> f32 {
+    return max(rain_speed, 0.1);
+}
 
 struct RainOut {
     @builtin(position) clip: vec4<f32>,
@@ -1652,7 +1663,14 @@ fn rain_rand(n: u32) -> f32 {
 fn vs_rain(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32) -> RainOut {
     let seed = instance * 4u;
     let base = vec3<f32>(rain_rand(seed), rain_rand(seed + 1u), rain_rand(seed + 2u)) * RAIN_BOX;
-    let speed = 8.0 + rain_rand(seed + 3u) * 3.0;
+    // a drop's size (mm): mostly 1-3 mm, a few big ones; its speed is the
+    // terminal velocity for that size (Atlas et al. 1973), about 4.6 m/s
+    // for the smallest drawn here up to 9 m/s for the biggest
+    // heavier rain has bigger drops (Marshall-Palmer: the mean size grows
+    // with the rate)
+    let heavy = frame.rain.x;
+    let diameter = min(0.9 + heavy * 0.6 - log(1.0 - rain_rand(seed + 3u) * 0.999) * (0.5 + heavy), 6.0);
+    let speed = (9.65 - 10.3 * exp(-0.6 * diameter)) * rain_speed_scale();
     let time = frame.camera_pos.w;
     let velocity = vec3<f32>(RAIN_WIND * (0.8 + speed * 0.04), -speed);
     // the box is centered on the camera, a little above it; drops keep their
@@ -1668,8 +1686,16 @@ fn vs_rain(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance
     let to_cam = cam - pos;
     let dist = length(to_cam);
     let side = normalize(cross(axis, to_cam / max(dist, 0.001)) + vec3<f32>(1e-5, 0.0, 0.0));
-    let length_m = speed * 0.062;
-    let width = 0.0045 + dist * 0.0006;
+    let length_m = speed * RAIN_EXPOSURE;
+    // a drop's real width; where that is under RAIN_MIN_PX pixels it is
+    // drawn that wide but fainter by as much (its coverage), so far rain
+    // turns into a faint haze instead of thick lines
+    let clip0 = frame.view_proj * vec4<f32>(pos, 1.0);
+    let clip1 = frame.view_proj * vec4<f32>(pos + side, 1.0);
+    let px_per_m = length((clip1.xy / max(clip1.w, 1e-3) - clip0.xy / max(clip0.w, 1e-3)) * frame.screen.xy * 0.5);
+    let real = diameter * 0.001;
+    let width = max(real, RAIN_MIN_PX / max(px_per_m, 1e-3)) * 0.5;
+    let coverage = clamp(real / (width * 2.0), 0.0, 1.0);
     let corners = array<vec2<f32>, 6>(
         vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0),
         vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(-1.0, 1.0));
@@ -1679,7 +1705,7 @@ fn vs_rain(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance
     // fades: right in front of the lens, and toward the box's faces
     let local = abs(pos - (cam + RAIN_BOX * vec3<f32>(0.0, 0.0, 0.15))) / (RAIN_BOX * 0.5);
     let edge = max(max(local.x, local.y), local.z);
-    var life = smoothstep(0.35, 1.6, dist) * (1.0 - smoothstep(0.62, 0.95, edge));
+    var life = smoothstep(0.35, 1.6, dist) * (1.0 - smoothstep(0.62, 0.95, edge)) * pow(coverage, 0.6);
 
     var out: RainOut;
     out.clip = frame.view_proj * vec4<f32>(world, 1.0);
@@ -1726,7 +1752,7 @@ fn rain_lamps(world: vec3<f32>, frag: vec2<f32>, view: vec3<f32>) -> vec3<f32> {
         if (dist >= radius) { continue; }
         let atten = ll_light_atten(dist / radius, lt.color_falloff.w);
         let behind = max(dot(-view, to_l / max(dist, 1e-4)), 0.0);
-        sum += lt.color_falloff.rgb * atten * (0.25 + pow(behind, 6.0) * 2.5);
+        sum += lt.color_falloff.rgb * atten * (0.06 + pow(behind, 8.0) * 1.1);
     }
     return sum;
 }
@@ -1752,13 +1778,13 @@ fn fs_rain(in: RainOut) -> @location(0) vec4<f32> {
     let reflection = reflect(-view, normal);
     let reflected = sky_color(vec3<f32>(reflection.xy, abs(reflection.z)));
     let toward_sun = max(dot(-view, frame.sun_dir.xyz), 0.0);
-    let glint = frame.sun_color.rgb * frame.sun_dir.w * (pow(toward_sun, 12.0) * 2.5 + pow(toward_sun, 3.0) * 0.25);
+    let glint = frame.sun_color.rgb * frame.sun_dir.w * (pow(toward_sun, 12.0) * 1.5 + pow(toward_sun, 3.0) * 0.15);
     let ambient = frame.sky_horizon.rgb * 0.12;
     let lamps = rain_lamps(in.world, in.clip.xy, view);
-    let color = mix(transmitted * 1.04, reflected, fresnel) + (glint + ambient) * (0.35 + fresnel) + lamps * (0.6 + fresnel);
+    let color = mix(transmitted * 1.04, reflected, fresnel) + (glint + ambient) * (0.35 + fresnel) + lamps * (0.3 + fresnel * 0.5);
 
     // drops a lamp lights stand out of the dark
-    let lit = min(dot(lamps, vec3<f32>(0.2126, 0.7152, 0.0722)) * 0.35, 0.45);
+    let lit = min(dot(lamps, vec3<f32>(0.2126, 0.7152, 0.0722)) * 0.12, 0.15);
     var alpha = taper * sqrt(r) * (0.22 + fresnel * 0.55 + lit) * in.life;
     alpha *= 1.0 - rain_sheltered(in.world);
     // soft where a drop meets the ground or a wall behind it
@@ -1878,24 +1904,34 @@ fn fs_rain_wet(in: RainWetOut) -> @location(0) vec4<f32> {
     let dist = distance(world, cam);
     let up = smoothstep(0.5, 0.85, n.z);
     let open = 1.0 - rain_sheltered(world + n * 0.08);
-    let wet = up * open * (1.0 - smoothstep(28.0, 38.0, dist));
+    let heavy = frame.rain.x;
+    let wet = up * open * (1.0 - smoothstep(28.0, 38.0, dist)) * smoothstep(0.0, 0.25, heavy);
     if (wet < 0.01) { discard; }
 
     let view = normalize(cam - world);
     let base = textureSampleLevel(scene_tex, lin_clamp, uv, 0.0).rgb;
     // puddles: low flat spots of a noise pattern, rippled by the drops
     let shape = water_fx_noise(world.xy * 0.16) * 0.7 + water_fx_noise(world.xy * 0.55) * 0.3;
-    let puddle = smoothstep(0.56, 0.64, shape) * smoothstep(0.93, 0.985, n.z);
-    let ripple = rain_ripples(world.xy, frame.camera_pos.w) * puddle;
-    let np = normalize(vec3<f32>(n.xy + ripple * 0.06, n.z));
+    // water only pools where the ground is within about 8 degrees of level,
+    // and its surface is level whatever the ground below is shaped like:
+    // the puddle's facing is straight up, broken only by the ripples (the
+    // ground's triangles no longer show in it, and no rings on slopes)
+    let pool_level = 0.66 - heavy * 0.12;
+    let puddle = smoothstep(pool_level, pool_level + 0.08, shape) * smoothstep(0.985, 0.995, n.z);
+    let ripple = rain_ripples(world.xy, frame.camera_pos.w) * puddle * sqrt(heavy);
+    let np = normalize(vec3<f32>(ripple * 0.06, 1.0));
     let r = reflect(-view, np);
+    // damp (not pooled) ground: its own facing, half toward level
+    let nd = normalize(mix(n, vec3<f32>(0.0, 0.0, 1.0), 0.5));
+    let rd = reflect(-view, nd);
+    let fresnel_d = 0.02037 + 0.97963 * pow(1.0 - max(dot(nd, view), 0.0), 5.0);
     let fresnel = 0.02037 + 0.97963 * pow(1.0 - max(dot(np, view), 0.0), 5.0);
 
-    let sky = sky_color(vec3<f32>(r.xy, abs(r.z)));
-    let damp = base * 0.58 + sky * fresnel * 0.35 + rain_wet_lamps(world, in.clip.xy, n, view, 60.0) * 0.5;
+    let sky = sky_color(vec3<f32>(rd.xy, abs(rd.z)));
+    let damp = base * 0.58 + sky * fresnel_d * 0.35 + rain_wet_lamps(world, in.clip.xy, nd, view, 24.0) * 0.5;
     var color = damp;
     if (puddle > 0.01) {
-        let mirrored = rain_puddle_reflection(world + np * 0.02, r);
+        let mirrored = rain_puddle_reflection(world + vec3<f32>(0.0, 0.0, 0.02), r);
         let pool = mix(base * 0.3, mirrored, 0.35 + fresnel * 0.6) + rain_wet_lamps(world, in.clip.xy, np, view, 400.0);
         color = mix(damp, pool, puddle);
     }

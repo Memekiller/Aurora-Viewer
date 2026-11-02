@@ -59,6 +59,9 @@ pub struct EnvironmentUi {
     pub night: Option<NightSkyPick>,
     /// Open this list's drop-down on the next frame (demo captures).
     pub open_list: Option<SettingsKind>,
+    /// Rain prototype: how hard it rains (0..1) once the slider moved; until
+    /// then `AURORA_RAIN`.
+    rain: Option<f32>,
 }
 
 impl EnvironmentUi {
@@ -74,6 +77,20 @@ impl EnvironmentUi {
             self.built = Some(version);
             self.built_at = Some(std::time::Instant::now());
         }
+    }
+
+    /// Rain prototype: how hard it rains, 0 (none) to 1 (a downpour).
+    pub fn rain(&self) -> f32 {
+        self.rain.unwrap_or_else(|| {
+            static START: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+            *START.get_or_init(|| {
+                std::env::var("AURORA_RAIN")
+                    .ok()
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .unwrap_or(0.0)
+                    .clamp(0.0, 1.0)
+            })
+        })
     }
 
     pub fn catalog(&self) -> &SettingsCatalog {
@@ -99,7 +116,7 @@ impl EnvironmentUi {
             "environment_selector",
             aurora_i18n::tr!("common-environment"),
             pos,
-            Vec2::new(440.0, 300.0),
+            Vec2::new(440.0, 330.0),
         )
         .fixed()
         .help(aurora_i18n::tr!("ui-environment-choose-a-sky-water-or-day-cycle-from-your"))
@@ -197,6 +214,23 @@ impl EnvironmentUi {
                         // same preset again stays
                         out.push(EnvAction::Preset(preset));
                     }
+                }
+            });
+            // rain prototype: how hard it rains, for this viewer only
+            ui.horizontal(|ui| {
+                let (rect, resp) = ui.allocate_exact_size(Vec2::new(LABEL_W, 20.0), egui::Sense::hover());
+                ui.painter().text(
+                    rect.left_center(),
+                    egui::Align2::LEFT_CENTER,
+                    aurora_i18n::tr!("ui-environment-rain"),
+                    egui::FontId::proportional(12.5),
+                    p.ink,
+                );
+                resp.on_hover_text(aurora_i18n::tr!("ui-environment-rain-tip"));
+                let mut rain = self.rain();
+                let slider = egui::Slider::new(&mut rain, 0.0..=1.0).show_value(false);
+                if ui.add_sized(Vec2::new(COMBO_W, 20.0), slider).changed() {
+                    self.rain = Some(rain);
                 }
             });
             let status = if self.scan_left > 0 {

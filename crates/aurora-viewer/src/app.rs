@@ -9581,6 +9581,7 @@ impl App {
             },
             // the photo's isolation, "show only" on an empty background
             cutout: self.world.photo_isolation.empty_background(),
+            rain: self.env_ui.rain(),
             look: None,
         };
         // a photo's look, or the live view's in the photo mode

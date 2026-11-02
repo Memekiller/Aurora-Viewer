@@ -159,6 +159,8 @@ struct FrameU {
     motion_vp: [[f32; 4]; 4],
     motion_prev_vp: [[f32; 4]; 4],
     motion_reproj: [[f32; 4]; 4],
+    /// Rain prototype: x how hard it rains (0..1).
+    rain: [f32; 4],
 }
 
 /// Must match `ShadowParams` in object.wgsl.
@@ -455,7 +457,7 @@ fn spot_shadow_views(f: &FrameParams) -> [Option<(SpotShadow, Mat4)>; SPOT_SHADO
     });
     // Rain prototype: a free last map becomes the shelter map, the depth of
     // what is overhead seen straight down. No light uses it (light -1).
-    if f.shadows && rain_drops() > 0 && views[RAIN_SHELTER_MAP].is_none() {
+    if f.shadows && rain_drops(f.rain) > 0 && views[RAIN_SHELTER_MAP].is_none() {
         views[RAIN_SHELTER_MAP] = Some((
             SpotShadow {
                 light: u32::MAX,
@@ -1963,12 +1965,19 @@ fn begin_scene_b_on<'a>(
     })
 }
 
-/// Rain prototype: `AURORA_RAIN=<0..1>`, read once; 1 is 30,000 drops.
-fn rain_drops() -> u32 {
-    static DROPS: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-    *DROPS.get_or_init(|| {
-        let intensity: f32 = std::env::var("AURORA_RAIN").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0);
-        (intensity.clamp(0.0, 1.0) * 30_000.0) as u32
+/// Rain prototype: the drops drawn for a rain of `rain` (0..1); 1, a
+/// downpour, is 45,000 drops.
+fn rain_drops(rain: f32) -> u32 {
+    (rain.clamp(0.0, 1.0) * 45_000.0) as u32
+}
+
+/// Rain prototype tuning: `AURORA_RAIN_SPEED=<scale>`, the drops' speed
+/// relative to the real terminal velocity for their size (default 1).
+fn rain_constants() -> &'static [(&'static str, f64)] {
+    static CONSTANTS: std::sync::OnceLock<[(&'static str, f64); 1]> = std::sync::OnceLock::new();
+    CONSTANTS.get_or_init(|| {
+        let speed: f64 = std::env::var("AURORA_RAIN_SPEED").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0);
+        [("rain_speed", speed.clamp(0.1, 4.0))]
     })
 }
 
@@ -3600,6 +3609,7 @@ impl Backend {
             write_mask: wgpu::ColorWrites::ALL,
             depth_write: false,
             depth_compare: wgpu::CompareFunction::Greater,
+            constants: rain_constants(),
             ..base("rain", "vs_rain", "fs_rain")
         });
         let rain_wet = pipe(PipeDesc {
@@ -5234,6 +5244,7 @@ impl Backend {
         let inv_view = view.inverse();
         let camera_pos = inv_view.transform_point3(Vec3::ZERO);
         let mut u = FrameU::zeroed();
+        u.rain = [f.rain.clamp(0.0, 1.0), 0.0, 0.0, 0.0];
         u.selection_color = f.selection_color;
         u.rez_gradient = f.rez_gradient;
         u.view_proj = vp.to_cols_array_2d();
@@ -7635,7 +7646,7 @@ impl Backend {
                 .encode(&self.device, &mut encoder, color, depth, HDR_FORMAT, samples);
         }
         let water_particles = if f.cutout { 0 } else { self.water_effects.particles };
-        let rain_drops = if f.cutout { 0 } else { rain_drops() };
+        let rain_drops = if f.cutout { 0 } else { rain_drops(f.rain) };
         if water_particles > 0 && above_water_possible {
             let mut pass = begin_scene_b(&mut encoder, &self.targets, "submerged water particles", false, false);
             bind_mesh(&mut pass, &self.groups.a);

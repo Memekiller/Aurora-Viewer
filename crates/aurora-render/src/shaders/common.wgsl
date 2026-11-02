@@ -112,6 +112,7 @@ struct Frame {
     motion_vp: mat4x4<f32>,
     motion_prev_vp: mat4x4<f32>,
     motion_reproj: mat4x4<f32>,
+    rain: vec4<f32>,            // rain prototype: x how hard it rains (0..1)
 };
 
 // frame.features.x: "HDR and Emissive" off, the Legacy Viewer's G-buffer has

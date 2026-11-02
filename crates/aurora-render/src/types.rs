@@ -1329,6 +1329,8 @@ pub struct FrameParams {
     /// what is drawn keeps its coverage, in the snapshot's alpha or over a
     /// checkerboard on the live view.
     pub cutout: bool,
+    /// Rain prototype: how hard it rains, 0 (none) to 1 (a downpour).
+    pub rain: f32,
     /// The photo's look (looks.rs), over the image once tone mapped; None:
     /// none, at no cost.
     pub look: Option<crate::looks::PhotoLook>,

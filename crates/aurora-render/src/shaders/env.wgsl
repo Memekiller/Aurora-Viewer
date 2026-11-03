@@ -1925,6 +1925,44 @@ fn rain_depth_normal(uv: vec2<f32>, world: vec3<f32>) -> vec3<f32> {
     return n;
 }
 
+// The terrain's heights around the camera (viewer scene/rain_ground.rs):
+// `frame.rain` yz its corner, w its size (0: none).
+@group(0) @binding(25) var rain_ground: texture_2d<f32>;
+
+// The terrain's height at `xy` (bilinear between half-metre cells); -1e9
+// outside the square or the regions.
+fn rain_terrain(xy: vec2<f32>) -> f32 {
+    let extent = frame.rain.w;
+    if (extent <= 0.0) { return -1e9; }
+    let uv = (xy - frame.rain.yz) / extent;
+    if (any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0))) { return -1e9; }
+    let size = i32(textureDimensions(rain_ground).x);
+    let pos = clamp(uv * f32(size) - 0.5, vec2<f32>(0.0), vec2<f32>(f32(size - 1)));
+    let i = vec2<i32>(floor(pos));
+    let j = min(i + vec2<i32>(1), vec2<i32>(size - 1));
+    let f = fract(pos);
+    let a = textureLoad(rain_ground, i, 0).x;
+    let b = textureLoad(rain_ground, vec2<i32>(j.x, i.y), 0).x;
+    let c = textureLoad(rain_ground, vec2<i32>(i.x, j.y), 0).x;
+    let d = textureLoad(rain_ground, j, 0).x;
+    if (min(min(a, b), min(c, d)) < -1e3) { return -1e9; }
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+// How deep the terrain's dip at `xy` is: how much lower than the ground
+// 1.5 m around it (> 0 in a hollow, < 0 on a hump), and how steep it is
+// there (w of the result: rise over run).
+fn rain_terrain_shape(xy: vec2<f32>, h: f32) -> vec2<f32> {
+    var around = 0.0;
+    for (var k = 0; k < 8; k++) {
+        let a = f32(k) * 0.7853982;
+        around += rain_terrain(xy + vec2<f32>(cos(a), sin(a)) * 1.5);
+    }
+    let gx = rain_terrain(xy + vec2<f32>(0.5, 0.0)) - rain_terrain(xy - vec2<f32>(0.5, 0.0));
+    let gy = rain_terrain(xy + vec2<f32>(0.0, 0.5)) - rain_terrain(xy - vec2<f32>(0.0, 0.5));
+    return vec2<f32>(around / 8.0 - h, length(vec2<f32>(gx, gy)));
+}
+
 // The ground's shape over about 30 cm around a point, from the depth: its
 // facing across several triangles (xyz), how much higher the point is than
 // around it (w: > 0 on a bump, < 0 in a dip); none (w 1e3) where both
@@ -2006,10 +2044,23 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
     let shape = water_fx_noise(world.xy * 0.16) * 0.7 + water_fx_noise(world.xy * 0.55) * 0.3;
     // judged over the area: the blobs' shapes, not the triangles', make the
     // edges; water runs off bumps (a rock's top) and gathers in dips
-    let pool_level = mix(0.78, 0.53, sqrt(heavy));
-    let dip = clamp(-area.w * 4.0, 0.0, 0.15);
-    let flat_area = smoothstep(0.95, 0.98, area.z) * select(0.0, 1.0, smooth_area) * (1.0 - smoothstep(0.0, 0.02, area.w));
-    let puddle = smoothstep(pool_level, pool_level + 0.05, shape + dip) * flat_area;
+    var puddle = 0.0;
+    let terrain = rain_terrain(world.xy);
+    if (terrain > -1e8 && abs(world.z - terrain) < 0.12) {
+        // on the terrain: the water fills its dips, from the heightmap (the
+        // noise only frays the edges); a drizzle leaves it in the deepest,
+        // a downpour spreads it over the flat ground too
+        let ts = rain_terrain_shape(world.xy, terrain);
+        let fill = mix(0.09, -0.01, sqrt(heavy));
+        let flat_ground = 1.0 - smoothstep(0.12, 0.25, ts.y);
+        puddle = smoothstep(fill, fill + 0.025, ts.x + (shape - 0.5) * 0.05) * flat_ground;
+    } else {
+        // on a build (a floor, a road, a roof): the screen's rules
+        let pool_level = mix(0.78, 0.53, sqrt(heavy));
+        let dip = clamp(-area.w * 4.0, 0.0, 0.15);
+        let flat_area = smoothstep(0.95, 0.98, area.z) * select(0.0, 1.0, smooth_area) * (1.0 - smoothstep(0.0, 0.02, area.w));
+        puddle = smoothstep(pool_level, pool_level + 0.05, shape + dip) * flat_area;
+    }
 
     // damp: how wet each spot is. The cracks hold water first (pixels
     // darker than their surroundings: the gaps between cobbles, the grain

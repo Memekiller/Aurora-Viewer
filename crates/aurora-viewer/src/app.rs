@@ -10294,12 +10294,14 @@ impl App {
         // capture is waited for, its pixels are read in the tail below.
         // (nothing of the scene while the 3D drawing is paused behind,
         // texture_budget::Background)
+        let raining = self.env_ui.rain() > 0.0;
+        self.scene.update_rain_ground(&self.world, fp.camera_pos, raining);
         let lists = if self.in_world() && !self.scene.textures.drawing_paused() {
             &self.scene.lists
         } else {
             &self.empty_lists
         };
-        gfx.renderer.set_rain_surfaces(self.env_ui.rain() > 0.0);
+        gfx.renderer.set_rain_surfaces(raining);
         let stats = if self.demo && gfx.renderer.capture_request && std::env::var_os("AURORA_DEMO_RENDER_TEXTURE").is_some() {
             gfx.renderer.render_world_texture_capture(fp, lists)
         } else {

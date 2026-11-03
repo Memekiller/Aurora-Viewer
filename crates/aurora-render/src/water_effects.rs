@@ -138,6 +138,18 @@ pub struct WaterEvent {
     pub params: [f32; 4],
 }
 
+/// Rain prototype: the terrain's height in a square around the camera
+/// (`RAIN_GROUND_SIZE` cells a side, row by row from `origin`), for the
+/// puddles that gather in its dips. Empty: none.
+#[derive(Debug, Clone, Default)]
+pub struct RainGround {
+    pub origin: [f32; 2],
+    pub extent: f32,
+    pub heights: std::sync::Arc<[f32]>,
+}
+
+pub const RAIN_GROUND_SIZE: u32 = 128;
+
 #[derive(Debug, Clone, Default)]
 pub struct WaterGround {
     pub region: u64,
@@ -226,6 +238,11 @@ pub(crate) struct WaterGpu {
     pub events: wgpu::Buffer,
     ground: wgpu::Texture,
     pub ground_view: wgpu::TextureView,
+    rain_ground: wgpu::Texture,
+    pub rain_ground_view: wgpu::TextureView,
+    rain_ground_snapshot: Option<std::sync::Arc<[f32]>>,
+    /// Where the uploaded rain ground is: origin x, y, extent (0: none).
+    pub rain_area: [f32; 3],
     ground_snapshot: Option<std::sync::Arc<[[f32; 2]]>>,
     group: wgpu::BindGroup,
     pipeline: wgpu::ComputePipeline,
@@ -239,6 +256,44 @@ pub(crate) struct WaterGpu {
 }
 
 impl WaterGpu {
+    /// Rain prototype: the terrain heights around the camera, when they
+    /// changed.
+    pub fn upload_rain_ground(&mut self, queue: &wgpu::Queue, ground: &RainGround) {
+        let n = (RAIN_GROUND_SIZE * RAIN_GROUND_SIZE) as usize;
+        if ground.heights.len() != n || !(ground.extent > 0.0) {
+            self.rain_area = [0.0; 3];
+            return;
+        }
+        self.rain_area = [ground.origin[0], ground.origin[1], ground.extent];
+        if self
+            .rain_ground_snapshot
+            .as_ref()
+            .is_some_and(|old| std::sync::Arc::ptr_eq(old, &ground.heights))
+        {
+            return;
+        }
+        self.rain_ground_snapshot = Some(ground.heights.clone());
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.rain_ground,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            bytemuck::cast_slice(ground.heights.as_ref()),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(RAIN_GROUND_SIZE * 4),
+                rows_per_image: None,
+            },
+            wgpu::Extent3d {
+                width: RAIN_GROUND_SIZE,
+                height: RAIN_GROUND_SIZE,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+
     pub fn new(device: &wgpu::Device, size: u32) -> Self {
         use wgpu::util::DeviceExt;
         let textures = std::array::from_fn(|index| {
@@ -304,6 +359,21 @@ impl WaterGpu {
             cache: None,
         });
         let ground_view = ground.create_view(&Default::default());
+        let rain_ground = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("rain ground heights"),
+            size: wgpu::Extent3d {
+                width: RAIN_GROUND_SIZE,
+                height: RAIN_GROUND_SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R32Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let rain_ground_view = rain_ground.create_view(&Default::default());
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("water simulation"),
             layout: &pipeline.get_bind_group_layout(0),
@@ -413,6 +483,10 @@ impl WaterGpu {
             events,
             ground,
             ground_view,
+            rain_ground,
+            rain_ground_view,
+            rain_ground_snapshot: None,
+            rain_area: [0.0; 3],
             ground_snapshot: None,
             group,
             pipeline,

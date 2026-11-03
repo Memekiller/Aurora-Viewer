@@ -1160,7 +1160,8 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     var wavef = (wave1 + wave2 * 0.4 + wave3 * 0.6) * 0.5;
     // rain prototype: the puddles' rings in the waves themselves, so they
     // bend the reflection and the refraction and ride the waves
-    wavef = vec3<f32>(wavef.xy + rain_water_rings(in.world_pos), wavef.z);
+    let rain_footprint = max(length(dpdx(in.world_pos.xy)), length(dpdy(in.world_pos.xy)));
+    wavef = vec3<f32>(wavef.xy + rain_water_rings(in.world_pos, rain_footprint), wavef.z);
     var n = wavef * frame.water_normal.xyz;
     n.z *= 2.0;
     let footprint=max(length(dpdx(in.world_pos.xy)),length(dpdy(in.world_pos.xy)));
@@ -1837,6 +1838,13 @@ fn vs_rain_wet(@builtin(vertex_index) vertex: u32) -> RainWetOut {
     return out;
 }
 
+// How much of the rings a pixel can show: their crests are about 10 cm
+// apart, so a pixel covering more than a few cm of the surface (far, or at a
+// grazing angle) would turn them into sparkle; they fade out instead.
+fn rain_ring_detail(footprint: f32) -> f32 {
+    return 1.0 - smoothstep(0.015, 0.045, footprint);
+}
+
 // Ripple rings: one drop per 0.6 m cell, every 0.9 s at a random time and
 // place; the normal tilts across each ring's expanding crest.
 fn rain_ripples(xy: vec2<f32>, time: f32) -> vec2<f32> {
@@ -1919,23 +1927,39 @@ fn rain_depth_normal(uv: vec2<f32>, world: vec3<f32>) -> vec3<f32> {
 
 // The ground's shape over about 30 cm around a point, from the depth: its
 // facing across several triangles (xyz), how much higher the point is than
-// around it (w: > 0 on a bump, < 0 in a dip); none (w 1e3) where the four
-// points around are not on one smooth surface (an edge, holes in foliage).
+// around it (w: > 0 on a bump, < 0 in a dip); none (w 1e3) where both
+// points of a side are off the ground (holes in foliage, a narrow gap).
+// A point around that is on something standing on the ground (a box's side,
+// a stem: much steeper than ground can be) is left out, its opposite stands
+// for it mirrored, so that objects keep no dry ring around them.
 fn rain_area_shape(uv: vec2<f32>, world: vec3<f32>) -> vec4<f32> {
     let cam = frame.camera_pos.xyz;
     let dist = max(distance(world, cam), 0.5);
     let r = clamp(0.3 * frame.screen.y / (1.15 * dist), 2.0, 40.0);
     let o = r * frame.screen.zw;
-    let pr = world_from_depth(uv + vec2<f32>(o.x, 0.0), scene_depth_at(uv + vec2<f32>(o.x, 0.0)));
-    let pl = world_from_depth(uv - vec2<f32>(o.x, 0.0), scene_depth_at(uv - vec2<f32>(o.x, 0.0)));
-    let pd = world_from_depth(uv + vec2<f32>(0.0, o.y), scene_depth_at(uv + vec2<f32>(0.0, o.y)));
-    let pu = world_from_depth(uv - vec2<f32>(0.0, o.y), scene_depth_at(uv - vec2<f32>(0.0, o.y)));
-    // on one smooth surface, each pair's middle is close to the point
-    let off = length((pr + pl) * 0.5 - world) + length((pd + pu) * 0.5 - world);
-    if (off > 0.05 + 0.01 * dist) { return vec4<f32>(0.0, 0.0, 1.0, 1e3); }
+    var pr = world_from_depth(uv + vec2<f32>(o.x, 0.0), scene_depth_at(uv + vec2<f32>(o.x, 0.0)));
+    var pl = world_from_depth(uv - vec2<f32>(o.x, 0.0), scene_depth_at(uv - vec2<f32>(o.x, 0.0)));
+    var pd = world_from_depth(uv + vec2<f32>(0.0, o.y), scene_depth_at(uv + vec2<f32>(0.0, o.y)));
+    var pu = world_from_depth(uv - vec2<f32>(0.0, o.y), scene_depth_at(uv - vec2<f32>(0.0, o.y)));
+    let br = rain_off_ground(world, pr);
+    let bl = rain_off_ground(world, pl);
+    let bd = rain_off_ground(world, pd);
+    let bu = rain_off_ground(world, pu);
+    if ((br && bl) || (bd && bu)) { return vec4<f32>(0.0, 0.0, 1.0, 1e3); }
+    if (br) { pr = world * 2.0 - pl; }
+    if (bl) { pl = world * 2.0 - pr; }
+    if (bd) { pd = world * 2.0 - pu; }
+    if (bu) { pu = world * 2.0 - pd; }
     var n = normalize(cross(pr - pl, pd - pu));
     if (dot(n, cam - world) < 0.0) { n = -n; }
     return vec4<f32>(n, world.z - (pr.z + pl.z + pd.z + pu.z) * 0.25);
+}
+
+// A point around is not on the same ground: rising or dropping more than
+// about 27 degrees from the point (ground that water pools on is far
+// flatter).
+fn rain_off_ground(world: vec3<f32>, p: vec3<f32>) -> bool {
+    return abs(p.z - world.z) > 0.5 * length(p.xy - world.xy) + 0.01;
 }
 
 // A surface in the rain. `n`: its smooth facing; `porosity` 0 (glass,
@@ -2006,7 +2030,9 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
     var color = deeper + sheen + glints;
 
     if (puddle > 0.01) {
-        let ripple = rain_ripples(world.xy, frame.camera_pos.w) * puddle * sqrt(heavy);
+        let along = max(abs(dot(view, vec3<f32>(0.0, 0.0, 1.0))), 0.05);
+        let footprint = dist * 1.15 * frame.screen.w / along;
+        let ripple = rain_ripples(world.xy, frame.camera_pos.w) * puddle * sqrt(heavy) * rain_ring_detail(footprint);
         let np = normalize(vec3<f32>(ripple * 0.06, 1.0));
         let r = reflect(-view, np);
         let fresnel = 0.02037 + 0.97963 * pow(1.0 - max(dot(np, view), 0.0), 5.0);
@@ -2074,13 +2100,13 @@ fn fs_rain_wet_g(in: RainWetOut) -> @location(0) vec4<f32> {
 // ------------------------------------------------- rain on water (prototype)
 // The puddles' rings (`rain_ripples`) as a slope added to the water's waves
 // (`water_pixel`): open to the sky, within reach, above the water.
-fn rain_water_rings(world: vec3<f32>) -> vec2<f32> {
+fn rain_water_rings(world: vec3<f32>, footprint: f32) -> vec2<f32> {
     let heavy = frame.rain.x;
     if (heavy <= 0.0) { return vec2<f32>(0.0); }
     let reach = 1.0 - smoothstep(30.0, 45.0, distance(world, frame.camera_pos.xyz));
     if (reach <= 0.0) { return vec2<f32>(0.0); }
     let open = 1.0 - rain_sheltered(world + vec3<f32>(0.0, 0.0, 0.1));
-    return rain_ripples(world.xy, frame.camera_pos.w) * (0.35 * sqrt(heavy) * reach * open);
+    return rain_ripples(world.xy, frame.camera_pos.w) * (0.35 * sqrt(heavy) * reach * open * rain_ring_detail(footprint));
 }
 
 

@@ -1262,6 +1262,8 @@ pub struct RainLook {
     /// drops and splashes, the distant rain's layers, the puddles' ring
     /// layers and their reflections).
     pub quality: u32,
+    /// What falls is snow: flakes instead of drops, nothing wets.
+    pub snow: bool,
 }
 
 impl Default for RainLook {
@@ -1272,6 +1274,7 @@ impl Default for RainLook {
             wind: [0.0; 2],
             drift: [0.0; 2],
             quality: 2,
+            snow: false,
         }
     }
 }

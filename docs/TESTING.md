@@ -3615,6 +3615,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_DOF=<f>:<m>[:debug]` | Depth of field at this aperture and focus distance |
 | `AURORA_DEMO_AA_SWITCH=<frame>:<mode>[,…]` | Anti-aliasing changed at these frames, as Preferences would |
 | `AURORA_RAIN=<0..1>` | Rain of this strength until the Weather section is used |
+| `AURORA_SNOW=<0..1>` | Snow of this strength until the Weather section is used |
 | `AURORA_RAIN_SPEED=<scale>` | Raindrops' speed relative to their real fall speed (prototype tuning) |
 | `AURORA_RAIN_DEBUG=1` | Rain's wetness memory drawn in colours over the ground |
 | `AURORA_RAIN_PARTICLES=<0..1>` | The first rain prototype, on particles (to be removed) |
@@ -3626,7 +3627,9 @@ both open states and the selection count. Capture at frame 620.
 - **Weather (`AURORA_RAIN`, `AURORA_THUNDER_*`)**: the weather of the
   Environment window's Weather section is drawn for this viewer only.
   `AURORA_RAIN=<0..1>` sets the rain (0 none, 1 a downpour) for captures
-  and stays until the section is touched in that session; the wind, the
+  and stays until the section is touched in that session, and
+  `AURORA_SNOW=<0..1>` snow the same way (it wins over `AURORA_RAIN`); the
+  wind, the
   puddles, the thunder and the quality come from the settings.
   `AURORA_RAIN_SPEED=<scale>` (0.1 to 4, default 1) scales the drops' fall
   speed from their real terminal speed. `AURORA_RAIN_DEBUG=1` colours the

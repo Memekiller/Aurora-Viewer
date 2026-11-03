@@ -92,9 +92,31 @@ impl WeatherSettings {
         }
         match self.precipitation {
             Precipitation::Rain => self.amount.clamp(0.0, 1.0),
-            // snow is not drawn yet
+            // snow wets nothing, makes no rain sound and no thunder
             Precipitation::Snow => 0.0,
         }
+    }
+
+    /// Snow is chosen (the menu's, or `AURORA_SNOW` until the menu is used).
+    pub fn snowing(&self) -> bool {
+        if !self.touched && env_snow().is_some() {
+            return true;
+        }
+        self.precipitation == Precipitation::Snow
+    }
+
+    /// How hard whatever falls falls, rain or snow (0..1): what the drops
+    /// pass draws.
+    pub fn fall(&self) -> f32 {
+        if !self.touched
+            && let Some(v) = env_snow()
+        {
+            return v;
+        }
+        if self.snowing() {
+            return self.rain_or_amount().clamp(0.0, 1.0);
+        }
+        self.rain()
     }
 
     /// The amount the slider shows: `AURORA_RAIN` until the menu is used.
@@ -131,6 +153,7 @@ impl WeatherSettings {
             distance: self.puddle_distance.clamp(*PUDDLE_DISTANCE.start(), *PUDDLE_DISTANCE.end()),
             wind: wind.now.to_array(),
             drift: wind.drift.to_array(),
+            snow: self.snowing(),
             quality: match self.quality {
                 WeatherQuality::Low => 0,
                 WeatherQuality::Medium => 1,
@@ -218,6 +241,18 @@ impl Wind {
     }
 }
 
+/// `AURORA_SNOW=<0..1>`: snow of this strength until the menu is used
+/// (demo captures).
+fn env_snow() -> Option<f32> {
+    static SNOW: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+    *SNOW.get_or_init(|| {
+        std::env::var("AURORA_SNOW")
+            .ok()
+            .and_then(|v| v.parse::<f32>().ok())
+            .map(|v| v.clamp(0.0, 1.0))
+    })
+}
+
 fn env_rain() -> Option<f32> {
     static RAIN: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
     *RAIN.get_or_init(|| {
@@ -242,6 +277,9 @@ mod tests {
         assert_eq!(w.rain(), 0.7);
         w.precipitation = Precipitation::Snow;
         assert_eq!(w.rain(), 0.0);
+        // but it falls: the drops pass draws it as snow
+        assert_eq!(w.fall(), 0.7);
+        assert!(w.snowing() && w.rain_look(&Wind::default()).snow);
         let read: WeatherSettings = serde_json::from_str("{\"amount\": 0.3}").expect("parse");
         assert!(read.puddles);
         assert_eq!(read.puddle_distance, PUDDLE_DISTANCE_DEFAULT);

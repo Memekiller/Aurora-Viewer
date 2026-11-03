@@ -5488,7 +5488,7 @@ impl Backend {
             f32::from(u8::from(f.rain_look.puddles)),
             f.rain_look.distance,
             f.rain_look.quality.min(2) as f32,
-            0.0,
+            f32::from(u8::from(f.rain_look.snow)),
         ];
         u.rain_wind = [f.rain_look.drift[0], f.rain_look.drift[1], f.rain_look.wind[0], f.rain_look.wind[1]];
         u.selection_color = f.selection_color;
@@ -6165,7 +6165,9 @@ impl Backend {
         // rain prototype: the terrain heights (and where they are, for the
         // uniforms below)
         self.water_effects.upload_rain_ground(&self.queue, &lists.rain_ground);
-        self.rain_wet.advance(f.rain, f.camera_pos.truncate());
+        // snow wets nothing: the ground dries as after rain
+        self.rain_wet
+            .advance(if f.rain_look.snow { 0.0 } else { f.rain }, f.camera_pos.truncate());
         let mut main = self.frame_uniforms(fu, fu.view, Some(fu.camera_pos), &cascades, &splits);
         main.cam_up[3] = camera_water_level;
         {
@@ -8143,8 +8145,11 @@ impl Backend {
                 pass.set_pipeline(&self.pipelines.rain);
                 pass.draw(0..6, 0..rain_drops);
                 // splashes: 6 droplets of 6 vertices; up to 9,000 places
-                pass.set_pipeline(&self.pipelines.rain_splash);
-                pass.draw(0..36, 0..(f.rain.clamp(0.0, 1.0) * 9_000.0 * rain_share(f.rain_look.quality)) as u32);
+                // (none in snow)
+                if !f.rain_look.snow {
+                    pass.set_pipeline(&self.pipelines.rain_splash);
+                    pass.draw(0..36, 0..(f.rain.clamp(0.0, 1.0) * 9_000.0 * rain_share(f.rain_look.quality)) as u32);
+                }
                 // beyond the drops' box: the distant rain's layers
                 pass.set_pipeline(&self.pipelines.rain_far);
                 pass.draw(0..3, 0..1);

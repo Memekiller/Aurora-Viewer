@@ -9690,7 +9690,8 @@ impl App {
             },
             // the photo's isolation, "show only" on an empty background
             cutout: self.world.photo_isolation.empty_background(),
-            rain: self.settings.weather.rain(),
+            // rain or snow: the drops pass draws either
+            rain: self.settings.weather.fall(),
             rain_look: self.settings.weather.rain_look(&self.weather_wind),
             look: None,
         };

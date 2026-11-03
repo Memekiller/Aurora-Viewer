@@ -706,9 +706,6 @@ fn weather_section(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
             if widgets::segmented(ui, p, &mut i, &[(rain, true), (snow, true)]) {
                 w.precipitation = if i == 0 { Precipitation::Rain } else { Precipitation::Snow };
             }
-            if w.precipitation == Precipitation::Snow {
-                ui.label(RichText::new(soon).size(11.0).color(p.muted_dim));
-            }
         });
         // how much
         ui.horizontal(|ui| {

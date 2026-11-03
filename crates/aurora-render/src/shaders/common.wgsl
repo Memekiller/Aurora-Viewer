@@ -115,7 +115,7 @@ struct Frame {
     rain: vec4<f32>,            // rain prototype: x how hard it rains (0..1)
     rain_wet: vec4<f32>,        // wetness memory: corner xy, size z (0: none), w the rain that wetted
     rain_wet_step: vec4<f32>,   // last corner xy, z time since (s, < 0: none), w soak of a new place
-    rain_look: vec4<f32>,       // x puddles (0/1), y how far the wet ground is drawn (m), z quality (0 low, 1 medium, 2 high)
+    rain_look: vec4<f32>,       // x puddles (0/1), y how far the wet ground is drawn (m), z quality (0 low, 1 medium, 2 high), w snow (0/1)
     rain_wind: vec4<f32>,       // xy how far the wind carried the drops (m), zw the wind now (m/s)
 };
 

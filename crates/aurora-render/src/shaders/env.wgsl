@@ -1646,6 +1646,18 @@ fn rain_speed_scale() -> f32 {
     return max(rain_speed, 0.1);
 }
 
+// What falls is snow (`RainLook::snow`): the drops pass draws flakes, and
+// nothing wets.
+fn snowing() -> bool {
+    return frame.rain_look.w > 0.5;
+}
+
+// How hard it rains, for what water does (the wet ground, puddles, rings,
+// splashes): none in snow.
+fn rain_liquid() -> f32 {
+    return select(frame.rain.x, 0.0, snowing());
+}
+
 struct RainOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) world: vec3<f32>,
@@ -1674,20 +1686,40 @@ fn vs_rain(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance
     // heavier rain has bigger drops (Marshall-Palmer: the mean size grows
     // with the rate)
     let heavy = frame.rain.x;
-    let diameter = min(0.9 + heavy * 0.6 - log(1.0 - rain_rand(seed + 3u) * 0.999) * (0.5 + heavy), 6.0);
-    let speed = (9.65 - 10.3 * exp(-0.6 * diameter)) * rain_speed_scale();
-    let time = frame.camera_pos.w;
+    let snow = snowing();
+    var diameter = min(0.9 + heavy * 0.6 - log(1.0 - rain_rand(seed + 3u) * 0.999) * (0.5 + heavy), 6.0);
+    var speed = (9.65 - 10.3 * exp(-0.6 * diameter)) * rain_speed_scale();
     // the wind carries the drops (small ones a little more): the slant from
     // the wind now, the place from all it blew so far (a gust bends the
     // rain, no drop jumps)
-    let carried = 0.8 + speed * 0.04;
-    let velocity = vec3<f32>(frame.rain_wind.zw * carried, -speed);
+    var carried = 0.8 + speed * 0.04;
+    if (snow) {
+        // flakes of 2 to 12 mm (most about 4), bigger in heavier snow,
+        // falling 0.5 to 1.5 m/s (aggregates fall a little faster, Locatelli
+        // and Hobbs 1974); light, they go with the air
+        let k = rain_rand(seed + 3u);
+        diameter = 2.0 + (8.0 + heavy * 2.0) * k * k;
+        speed = (0.5 + 0.08 * diameter + rain_rand(seed + 5u) * 0.3) * rain_speed_scale();
+        carried = 1.0;
+    }
+    let time = frame.camera_pos.w;
+    var velocity = vec3<f32>(frame.rain_wind.zw * carried, -speed);
     // the box is centered on the camera, a little above it; drops keep their
     // world place (parallax) and wrap through its faces
     let cam = frame.camera_pos.xyz;
     let corner = cam - RAIN_BOX * vec3<f32>(0.5, 0.5, 0.35);
     let moved = base + vec3<f32>(frame.rain_wind.xy * carried, -speed * time);
-    let pos = corner + (moved - corner - floor((moved - corner) / RAIN_BOX) * RAIN_BOX);
+    var pos = corner + (moved - corner - floor((moved - corner) / RAIN_BOX) * RAIN_BOX);
+    if (snow) {
+        // a flake flutters: it swings round a small circle as it falls (a
+        // few to 30 cm, once every 1 to 3 s), wider in the wind's eddies
+        let gusty = 1.0 + 0.04 * length(frame.rain_wind.zw);
+        let radius = (0.04 + 0.26 * rain_rand(seed + 6u)) * gusty;
+        let turn = 6.2831853 / (1.0 + 2.0 * rain_rand(seed + 7u)) * select(1.0, -1.0, rain_rand(seed + 8u) < 0.5);
+        let a = time * turn + rain_rand(seed + 9u) * 6.2831853;
+        pos += vec3<f32>(cos(a), sin(a), 0.0) * radius;
+        velocity += vec3<f32>(-sin(a), cos(a), 0.0) * radius * turn;
+    }
 
     // a streak: the distance fallen in about 1/16 s, a few millimeters wide,
     // turned around its own axis toward the camera
@@ -1695,7 +1727,8 @@ fn vs_rain(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance
     let to_cam = cam - pos;
     let dist = length(to_cam);
     let side = normalize(cross(axis, to_cam / max(dist, 0.001)) + vec3<f32>(1e-5, 0.0, 0.0));
-    let length_m = speed * RAIN_EXPOSURE;
+    // a flake is about as long as it is wide, a little smeared by its motion
+    let length_m = select(speed * RAIN_EXPOSURE, diameter * 0.001 + length(velocity) * 0.012, snow);
     // a drop's real width; where that is under RAIN_MIN_PX pixels it is
     // drawn that wide but fainter by as much (its coverage), so far rain
     // turns into a faint haze instead of thick lines
@@ -1755,10 +1788,14 @@ fn rain_sheltered(world: vec3<f32>) -> f32 {
 // How far a drop drifts sideways for each metre it falls, in the wind now
 // (no more than about 70° from the vertical).
 fn rain_slant() -> vec2<f32> {
-    let slope = frame.rain_wind.zw / 6.5;
+    // a middling drop falls about 6.5 m/s, a flake about 1 m/s, so the wind
+    // lays the snow down far more (up to about 80° from the vertical)
+    let fall = select(6.5, 1.0, snowing());
+    let cap = select(2.75, 5.5, snowing());
+    let slope = frame.rain_wind.zw / fall;
     let flat = dot(slope, slope);
     if (flat < 1e-8) { return vec2<f32>(0.0); }
-    return slope * min(1.0, 2.75 / sqrt(flat));
+    return slope * min(1.0, cap / sqrt(flat));
 }
 
 // Heights up a drop's path at which it is tested against the cover.
@@ -1833,7 +1870,36 @@ fn fs_rain(in: RainOut) -> @location(0) vec4<f32> {
 // A drop seen as a streak of water: bends the scene behind, reflects the
 // sky, catches the sun and the lamps. `soft`: how far (m) it fades into what
 // is behind it.
+// A snowflake: a soft white disc lit by the sky, the sun and the lamps
+// around (no glass: it scatters the light instead of bending it).
+fn snow_flake(in: RainOut, soft: f32) -> vec4<f32> {
+    if (in.life <= 0.001) { discard; }
+    if (in.world.z < frame.params.y || camera_underwater()) { discard; }
+    let d = length(in.uv);
+    var alpha = (1.0 - smoothstep(0.35, 1.0, d)) * in.life * 0.85;
+    if (alpha <= 0.002) { discard; }
+    let view = normalize(frame.camera_pos.xyz - in.world);
+    let ambient = frame.sky_zenith.rgb * 0.55 + frame.sky_horizon.rgb * 0.45;
+    // lit from all sides; a little brighter seen against the sun (forward
+    // scattering through the ice)
+    let toward_sun = max(dot(-view, frame.sun_dir.xyz), 0.0);
+    let sun = frame.sun_color.rgb * frame.sun_dir.w * (0.3 * max(frame.sun_dir.z, 0.0) + 0.4 * pow(toward_sun, 6.0));
+    let lamps = rain_lamps(in.world, in.clip.xy, view);
+    let color = ambient * 0.95 + sun + lamps * 0.7;
+    alpha *= 1.0 - rain_sheltered_slanted(in.world);
+    let suv = screen_uv(in.clip.xy);
+    let depth = scene_depth_at(suv);
+    if (depth > 0.0) {
+        let behind = world_from_depth(suv, depth);
+        let cam = frame.camera_pos.xyz;
+        alpha *= clamp((distance(behind, cam) - distance(in.world, cam)) / soft, 0.0, 1.0);
+    }
+    if (alpha < 0.003) { discard; }
+    return vec4<f32>(apply_fog(color, in.world) * alpha, alpha);
+}
+
 fn rain_streak(in: RainOut, soft: f32) -> vec4<f32> {
+    if (snowing()) { return snow_flake(in, soft); }
     if (in.life <= 0.001) { discard; }
     // no rain under the water, nor seen from under it
     if (in.world.z < frame.params.y || camera_underwater()) { discard; }
@@ -2103,7 +2169,7 @@ fn fs_rain_wet_update(in: RainWetOut) -> @location(0) vec4<f32> {
             known = true;
         }
     }
-    let heavy = frame.rain.x;
+    let heavy = rain_liquid();
     // slanted in the wind: ground in the lee of cover stays dry
     let top = rain_reached_height(xy, frame.camera_pos.z);
     if (!known) {
@@ -2289,8 +2355,8 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
     // how wet: the memory (wet for a while after the rain, and under cover
     // that only passed), else the shelter now
     var open = rain_wet_memory(world + n * 0.05);
-    if (open < 0.0) { open = (1.0 - rain_sheltered_slanted(world + n * 0.08)) * step(1e-4, frame.rain.x); }
-    let raining = frame.rain.x;
+    if (open < 0.0) { open = (1.0 - rain_sheltered_slanted(world + n * 0.08)) * step(1e-4, rain_liquid()); }
+    let raining = rain_liquid();
     // the standing water: how long and hard it has rained, not the rain now
     let heavy = frame.rain_wet.w;
     let far = frame.rain_look.y;
@@ -2486,7 +2552,7 @@ fn fs_rain_wet_g(in: RainWetOut) -> @location(0) vec4<f32> {
 // The puddles' rings (`rain_ripples`) as a slope added to the water's waves
 // (`water_pixel`): open to the sky, within reach, above the water.
 fn rain_water_rings(world: vec3<f32>, footprint: f32) -> vec2<f32> {
-    let heavy = frame.rain.x;
+    let heavy = rain_liquid();
     if (heavy <= 0.0) { return vec2<f32>(0.0); }
     let reach = 1.0 - smoothstep(30.0, 45.0, distance(world, frame.camera_pos.xyz));
     if (reach <= 0.0) { return vec2<f32>(0.0); }
@@ -2625,7 +2691,11 @@ const RAIN_FAR_CELL: f32 = 12.0;
 fn rain_far_streaks(anchor: vec2<f32>, d: vec3<f32>, scene: f32, pixel: f32, heavy: f32) -> f32 {
     let cam = frame.camera_pos.xyz;
     let time = frame.camera_pos.w;
-    let speed = 7.0;
+    // snow: flakes falling about 1 m/s, seen as short dots, laid down far
+    // more by the wind, and brighter (white, where rain is clear)
+    let snow = snowing();
+    let speed = select(7.0, 1.0, snow);
+    let lean = select(1.7, 4.0, snow);
     let o = cam.xy - anchor;
     let a = dot(d.xy, d.xy);
     let b = dot(o, d.xy);
@@ -2637,7 +2707,7 @@ fn rain_far_streaks(anchor: vec2<f32>, d: vec3<f32>, scene: f32, pixel: f32, hea
     // streak would wind round the cylinder (a drop falling `speed` blown
     // sideways at `blown` keeps x + z * blown / speed)
     let across_view = normalize(frame.cam_right.xy + vec2<f32>(1e-6, 0.0));
-    let slant = clamp(-dot(frame.rain_wind.zw, across_view) / speed, -1.7, 1.7);
+    let slant = clamp(-dot(frame.rain_wind.zw, across_view) / speed, -lean, lean);
     var lift = 0.0;
     // the layers the Weather quality draws: the two nearest at Low, three at
     // Medium
@@ -2658,7 +2728,7 @@ fn rain_far_streaks(anchor: vec2<f32>, d: vec3<f32>, scene: f32, pixel: f32, hea
         let theta = atan2(p.y - anchor.y, p.x - anchor.x);
         let w = pixel * radius;
         let column = w * 7.0;
-        let streak_len = 0.9 * pow(radius / 22.0, 0.7);
+        let streak_len = select(0.9, 0.12, snow) * pow(radius / 22.0, 0.7);
         for (var s = 0; s < 2; s++) {
             let u = theta * radius + f32(s) * column * 0.37 + p.z * slant;
             let col = floor(u / column);
@@ -2672,7 +2742,7 @@ fn rain_far_streaks(anchor: vec2<f32>, d: vec3<f32>, scene: f32, pixel: f32, hea
             let at = fract((p.z + time * speed * (1.0 - 0.1 * f32(k))) / period + rain_rand(seed + 2u)) * period;
             let along = smoothstep(0.0, length_here * 0.3, at) * (1.0 - smoothstep(length_here * 0.5, length_here, at));
             let faint = 0.3 + rain_rand(seed + 5u) * 0.7;
-            lift += across * along * faint * seen * (0.06 - 0.01 * f32(k));
+            lift += across * along * faint * seen * (0.06 - 0.01 * f32(k)) * select(1.0, 1.8, snow);
         }
     }
     return lift;
@@ -2729,12 +2799,17 @@ fn fs_rain_far(in: RainWetOut) -> @location(0) vec4<f32> {
     // the veil: drops too fine to see, more the farther the surface behind
     // (smoothly: a step per layer drew an edge where one met the ground)
     let veil_from = 22.0 / max(flat_len, 0.05);
-    let veil = (1.0 - exp(-max(scene - veil_from, 0.0) / 90.0)) * 0.2 * horizon * open;
-    let a = clamp(lift * pow(heavy, 1.2), 0.0, 0.5) + clamp(veil * heavy * heavy * 1.25, 0.0, 0.25);
+    // snow hides the distance sooner, and whiter
+    let snow = snowing();
+    let veil_reach = select(90.0, 55.0, snow);
+    let veil = (1.0 - exp(-max(scene - veil_from, 0.0) / veil_reach)) * 0.2 * horizon * open * select(1.0, 1.6, snow);
+    let a = clamp(lift * pow(heavy, 1.2), 0.0, 0.5) + clamp(veil * heavy * heavy * 1.25, 0.0, select(0.25, 0.4, snow));
     if (a < 0.002) { discard; }
     // the rain's own colour: what is behind it lightened toward the sky,
     // through the fog of where it is
     let fog_at = cam + d * min(scene, 80.0);
-    let rain = apply_fog(mix(behind, frame.sky_horizon.rgb, 0.25) * 1.12, fog_at);
+    let toward = select(0.25, 0.7, snow);
+    let light = select(1.12, 1.25, snow);
+    let rain = apply_fog(mix(behind, frame.sky_horizon.rgb, toward) * light, fog_at);
     return vec4<f32>(rain * a, a);
 }

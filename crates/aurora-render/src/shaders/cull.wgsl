@@ -373,7 +373,7 @@ fn face_mask(i: u32) -> u32 {
     // the rain's shelter map takes all of its square, however far the
     // shadows reach (a roof beyond them would leave the floor under it
     // open to the rain, cut at the seams between a building's meshes)
-    let shelters = (fl & F_SHADOWS) != 0u && (fl & F_SPOT_SHELTER) != 0u && (fl & (F_SPOT << 1u)) != 0u && spot_in(1u, c, r);
+    let shelters = (fl & F_SPOT_SHELTER) != 0u && (fl & (F_SPOT << 1u)) != 0u && spot_in(1u, c, r);
     if (!in_view && !casts && !reflects && !shelters) {
         return 0u;
     }

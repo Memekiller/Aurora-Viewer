@@ -2073,9 +2073,10 @@ impl RainWet {
 impl Backend {
     /// Rain prototype: the shelter map is drawn while it rains, and after,
     /// while the ground is still wet (the wetness memory fills in places new
-    /// to it, where the camera goes, from it).
+    /// to it, where the camera goes, from it); with the shadows off too,
+    /// alone in the atlas (low settings keep the rain out of the houses).
     fn rain_shelter(&self, f: &FrameParams) -> bool {
-        f.shadows && (rain_drops(f.rain) > 0 || !f.cutout && self.rain_wet.active())
+        rain_drops(f.rain) > 0 || !f.cutout && self.rain_wet.active()
     }
 }
 
@@ -7083,7 +7084,8 @@ impl Backend {
             mark(&mut encoder, MARK_SHADOW_C0_END);
             mark(&mut encoder, MARK_SHADOW_C1_END);
         }
-        if f.shadows {
+        let shelter_only = !f.shadows && self.rain_shelter(f);
+        if f.shadows || shelter_only {
             // What the atlas passes draw, in order: each cascade in its
             // tile, then the projectors' maps. One pass, unless the
             // cascades are merged: the pass then ends after the opaque
@@ -7107,7 +7109,15 @@ impl Backend {
             ];
             let size = self.shadow_size;
             let half = size / 2;
-            let passes = if merges.is_some() { MERGED } else { ONE_PASS };
+            // (shadows off: the rain's shelter map alone)
+            const SHELTER_ONLY: &[&[Step]] = &[&[Spots]];
+            let passes = if shelter_only {
+                SHELTER_ONLY
+            } else if merges.is_some() {
+                MERGED
+            } else {
+                ONE_PASS
+            };
             for (i, steps) in passes.iter().enumerate() {
                 let ts = if i == 0 && take_first() { ts_begin(&self.timer) } else { None };
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

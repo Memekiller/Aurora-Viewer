@@ -465,7 +465,10 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
         && !(own_first_person && (o.flags & object_flags::FIRST_PERSON_HIDDEN != 0 || f.bits & FACE_FIRST_PERSON_HIDDEN != 0));
     let casts = fl & frame_flags::SHADOWS != 0 && d - r < frame.dist[0];
     let reflects = fl & frame_flags::REFLECTIONS != 0 && d - r < frame.dist[1];
-    if !in_view && !casts && !reflects {
+    // the rain's shelter map: all of its square, blended faces too, shadows
+    // or not (cull.wgsl)
+    let shelters = fl & frame_flags::SPOT_SHELTER != 0 && fl & (frame_flags::SPOT << 1) != 0 && sphere_in(&frame.spots[1], c, r);
+    if !in_view && !casts && !reflects && !shelters {
         return (0, false);
     }
     let px = r * frame.dist[2] / d.max(0.1);
@@ -497,11 +500,11 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
             }
         }
     }
-    if caster {
+    if caster || shelters {
         let moves = o.flags & (object_flags::AVATAR | object_flags::RIGGED | object_flags::PHYSICAL) != 0;
         for (k, planes) in frame.spots.iter().enumerate() {
             let shelter = k == 1 && fl & frame_flags::SPOT_SHELTER != 0;
-            if fl & (frame_flags::SPOT << k) != 0 && sphere_in(planes, c, r) && !(shelter && moves) {
+            if (caster || shelter) && fl & (frame_flags::SPOT << k) != 0 && sphere_in(planes, c, r) && !(shelter && moves) {
                 m |= 1 << (BIN_SPOT + k);
             }
         }

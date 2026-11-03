@@ -2060,6 +2060,7 @@ pub(super) mod tests {
             rez_glow: false,
             system: None,
             first_person_hidden: false,
+            physical: false,
         };
         for idx in [front, back] {
             scene.gpu[idx].geom = Some(key);

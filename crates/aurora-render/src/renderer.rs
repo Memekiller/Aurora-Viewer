@@ -6656,6 +6656,7 @@ impl Backend {
                 (profile(), frame_flags::SHADOW_STATS),
                 (!shadow_depth_only, frame_flags::SHADOW_ALPHA_ALL),
                 (crate::shadow_cull::blend_casts(), frame_flags::BLEND_CASTS),
+                (f.shadows && rain_drops(f.rain) > 0, frame_flags::SPOT_SHELTER),
             ] {
                 if on {
                     flags |= bit;

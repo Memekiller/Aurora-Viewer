@@ -73,6 +73,8 @@ const OBJ_NO_PROBE: u32 = 16u;
 const OBJ_POSED: u32 = 32u;
 const OBJ_FIRST_PERSON_HIDDEN: u32 = 64u;
 const OBJ_PHOTO_HIDDEN: u32 = 128u;
+// physical (moves on its own): not in the rain's shelter map
+const OBJ_PHYSICAL: u32 = 256u;
 const FACE_FIRST_PERSON_HIDDEN: u32 = 16u;
 
 // a skeleton's own anchor, from the first joint of its palette (common.wgsl)
@@ -103,6 +105,8 @@ const F_WATER_AIR: u32 = 1024u;
 const F_BLEND_CASTS: u32 = 2048u;
 const F_FIRST_PERSON: u32 = 4096u;
 const F_SHOW_SELF: u32 = 8192u;
+// projector map 1 is the rain's shelter map: what moves is left out of it
+const F_SPOT_SHELTER: u32 = 16384u;
 
 struct CullFace {
     index_count: u32,
@@ -410,8 +414,12 @@ fn face_mask(i: u32) -> u32 {
     }
     // casters of the projectors' shadow maps, all drawn with the alpha test
     if (caster) {
+        // the rain's shelter map: what stands still overhead only (an
+        // avatar, a rigged mesh, a rolling ball leave no dry patch)
+        let moves = (o.flags & (OBJ_AVATAR | OBJ_RIGGED | OBJ_PHYSICAL)) != 0u;
         for (var k = 0u; k < 2u; k++) {
-            if ((fl & (F_SPOT << k)) != 0u && spot_in(k, c, r)) {
+            let shelter = k == 1u && (fl & F_SPOT_SHELTER) != 0u;
+            if ((fl & (F_SPOT << k)) != 0u && spot_in(k, c, r) && !(shelter && moves)) {
                 m |= 1u << (BIN_SPOT + k);
             }
         }

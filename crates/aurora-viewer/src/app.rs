@@ -515,6 +515,9 @@ pub struct App {
     /// Last tracker beacon sound (FIRE-16969).
     beacon_sound_at: Option<Instant>,
     wind_sound: crate::scene::wind_sound::WindSound,
+    /// Rain prototype: the rain's sound (scene/rain_sound.rs).
+    rain_sound: crate::scene::rain_sound::RainSound,
+    rain_sound_dt: Instant,
     /// Movement keys held since, and the server position then (stuck agent).
     stuck_watch: Option<(Instant, Vec3)>,
     stuck_logged: Option<Instant>,
@@ -1327,6 +1330,8 @@ impl App {
             script_dialogs_were: 0,
             beacon_sound_at: None,
             wind_sound: Default::default(),
+            rain_sound: Default::default(),
+            rain_sound_dt: Instant::now(),
             stuck_watch: None,
             stuck_logged: None,
             attachments_logged: 0,
@@ -5112,7 +5117,20 @@ impl App {
         self.scene.update_sound_occlusion(&self.world, engine, listener.pos, occlusion, now);
         // the reverb of the surroundings (Aurora's own)
         let reverb = crate::scene::sound_reverb::forced().unwrap_or(self.settings.audio.sound_reverb);
-        self.scene.update_sound_reverb(&self.world, engine, listener.pos, reverb, now);
+        let raining = self.env_ui.rain() > 0.0;
+        self.scene
+            .update_sound_reverb(&self.world, engine, listener.pos, reverb, raining, now);
+        // rain prototype: its sound, leaning toward the open sky
+        let demo_silent = self.demo && std::env::var_os("AURORA_DEMO_SOUND").is_none();
+        let input = crate::scene::rain_sound::RainSoundInput {
+            rain: self.env_ui.rain(),
+            sky: self.scene.sound_reverb.sky,
+            forward: (self.camera.target - self.camera.position).normalize_or(Vec3::X),
+            underwater: (self.world.main_water_height() - self.camera.position.z).max(0.0),
+            audible: matches!(self.screen, Screen::World) && !demo_silent,
+        };
+        self.rain_sound.update(engine, &input, self.rain_sound_dt.elapsed().as_secs_f32());
+        self.rain_sound_dt = Instant::now();
     }
 
     /// StreamTitleDisplay::checkMetadata (streamtitledisplay.cpp): the title

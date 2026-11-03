@@ -1078,6 +1078,7 @@ mod tests {
             rez_glow: false,
             system: None,
             first_person_hidden: false,
+            physical: false,
         }
     }
 

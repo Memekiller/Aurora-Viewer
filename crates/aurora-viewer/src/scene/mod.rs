@@ -50,6 +50,7 @@ mod plants;
 pub mod portals;
 pub mod probes;
 mod rain_ground;
+pub mod rain_sound;
 pub mod rez;
 mod sculpt_watch;
 mod selection_demo;
@@ -418,6 +419,8 @@ pub struct ObjGpu {
     /// Avatar wearing this object (attachments), for the avatar limit.
     pub owner_avatar: Option<usize>,
     pub first_person_hidden: bool,
+    /// Physical (FLAGS_USE_PHYSICS): out of the rain's shelter map.
+    pub physical: bool,
     /// Reflection probe flagged as a mirror (box); listed in
     /// `Scene::mirror_objects`.
     pub mirror: bool,
@@ -506,6 +509,7 @@ impl ObjGpu {
             (posed.is_some(), object_flags::POSED),
             (self.first_person_hidden, object_flags::FIRST_PERSON_HIDDEN),
             (self.photo_hidden, object_flags::PHOTO_HIDDEN),
+            (self.physical, object_flags::PHYSICAL),
         ] {
             if on {
                 fl |= bit;
@@ -996,7 +1000,7 @@ pub struct Scene {
     /// How muffled each world sound is behind walls (sound_occlusion.rs).
     sound_occlusion: sound_occlusion::SoundOcclusion,
     /// The reverb of the surroundings (sound_reverb.rs).
-    sound_reverb: sound_reverb::SoundReverb,
+    pub sound_reverb: sound_reverb::SoundReverb,
     /// Environment settings assets (the EEP default day).
     pub settings: settings::SettingsStreamer,
     /// Landmark asset fetches done, for `World::landmarks` (the app passes
@@ -3297,6 +3301,8 @@ impl Scene {
         g.hud = hud;
         g.owner_avatar = owner_avatar;
         g.first_person_hidden = first_person_hidden;
+        // FLAGS_USE_PHYSICS
+        g.physical = o.update_flags & 1 != 0;
         // reflection probe with the box and mirror flags (LLReflectionProbeParams)
         let mirror = o.extra.reflection_probe.is_some_and(|p| p.flags & 0x4 != 0 && p.flags & 0x1 != 0);
         if mirror != g.mirror {
@@ -6616,6 +6622,7 @@ mod tests {
             rez_glow: false,
             system: None,
             first_person_hidden: false,
+            physical: false,
         }
     }
 

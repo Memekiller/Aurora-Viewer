@@ -2024,6 +2024,15 @@ fn fs_rain_wet_update(in: RainWetOut) -> @location(0) vec4<f32> {
         // in the open, raining or drying, as if it had been seen all along
         wet_h = select(-1e9, top, top > -1e8);
         amount = step.w;
+    } else if (wet_h < -1e8 && top > -1e8) {
+        // only assumed open so far (it came in beyond the shelter map's
+        // reach): its first real look decides, at once
+        wet_h = top;
+        if (heavy > 0.0) {
+            amount += (1.0 - amount) * (1.0 - exp(-dt * (0.5 + heavy) / 8.0));
+        } else {
+            amount *= exp(-dt / 120.0);
+        }
     } else if (heavy > 0.0) {
         {
             if (top > -1e8) {
@@ -2116,10 +2125,11 @@ fn rain_area_shape(uv: vec2<f32>, world: vec3<f32>) -> vec4<f32> {
     var pl = world_from_depth(uv - vec2<f32>(o.x, 0.0), scene_depth_at(uv - vec2<f32>(o.x, 0.0)));
     var pd = world_from_depth(uv + vec2<f32>(0.0, o.y), scene_depth_at(uv + vec2<f32>(0.0, o.y)));
     var pu = world_from_depth(uv - vec2<f32>(0.0, o.y), scene_depth_at(uv - vec2<f32>(0.0, o.y)));
-    var br = rain_off_ground(world, pr);
-    var bl = rain_off_ground(world, pl);
-    var bd = rain_off_ground(world, pd);
-    var bu = rain_off_ground(world, pu);
+    let n0 = rain_depth_normal(uv, world);
+    var br = rain_off_ground(world, pr) || rain_off_plane(world, n0, pr);
+    var bl = rain_off_ground(world, pl) || rain_off_plane(world, n0, pl);
+    var bd = rain_off_ground(world, pd) || rain_off_plane(world, n0, pd);
+    var bu = rain_off_ground(world, pu) || rain_off_plane(world, n0, pu);
     // a lopsided pair: the side much higher or lower than the other is on
     // something else (a plank's or a stone's edge, a low box)
     let zr = abs(pr.z - world.z);
@@ -2148,6 +2158,14 @@ fn rain_area_shape(uv: vec2<f32>, world: vec3<f32>) -> vec4<f32> {
 // about 14 degrees (and 2 cm) from the point; ground that water pools on is
 // flatter, so a point on something standing on it (in front of it too: a
 // mushroom's cap a metre nearer the camera) is left out.
+// `p` is off the plane of the surface at `world` (facing `n`): something in
+// front of it or behind (a leg, a step), even where it is not much higher
+// for how far away it is
+fn rain_off_plane(world: vec3<f32>, n: vec3<f32>, p: vec3<f32>) -> bool {
+    let d = p - world;
+    return abs(dot(d, n)) > 0.03 + 0.08 * length(d);
+}
+
 fn rain_off_ground(world: vec3<f32>, p: vec3<f32>) -> bool {
     return abs(p.z - world.z) > 0.25 * length(p.xy - world.xy) + 0.02;
 }

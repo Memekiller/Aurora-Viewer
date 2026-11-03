@@ -2129,7 +2129,8 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
     var open = rain_wet_memory(world + n * 0.05);
     if (open < 0.0) { open = (1.0 - rain_sheltered(world + n * 0.08)) * step(1e-4, frame.rain.x); }
     let raining = frame.rain.x;
-    let heavy = max(frame.rain.x, frame.rain_wet.w);
+    // the standing water: how long and hard it has rained, not the rain now
+    let heavy = frame.rain_wet.w;
     let reach = up * open * (1.0 - smoothstep(28.0, 38.0, dist));
     if (reach < 0.01 || heavy <= 0.0) { return vec4<f32>(0.0); }
 
@@ -2154,7 +2155,7 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
         let pool_level = mix(0.78, 0.53, sqrt(heavy));
         let flat_ground = 1.0 - smoothstep(0.12, 0.25, ts.y);
         puddle = smoothstep(pool_level, pool_level + 0.05, shape + clamp(ts.x * 5.0, -0.3, 0.3)) * flat_ground;
-        puddle *= smoothstep(0.55, 0.95, open);
+        puddle *= smoothstep(0.15, 0.4, open);
     } else {
         // on a build (a floor, a road, a roof): the screen's rules
         let pool_level = mix(0.78, 0.53, sqrt(heavy));
@@ -2162,7 +2163,7 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
         let flat_area = smoothstep(0.95, 0.98, area.z) * select(0.0, 1.0, smooth_area) * (1.0 - smoothstep(0.0, 0.02, area.w))
             * smoothstep(0.985, 0.996, build_level);
         puddle = smoothstep(pool_level, pool_level + 0.05, shape + dip) * flat_area;
-        puddle *= smoothstep(0.55, 0.95, open);
+        puddle *= smoothstep(0.15, 0.4, open);
     }
 
     // damp: how wet each spot is. The cracks hold water first (pixels

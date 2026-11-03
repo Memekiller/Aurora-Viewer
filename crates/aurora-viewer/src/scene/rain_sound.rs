@@ -102,6 +102,7 @@ pub struct RainSound {
     roof_distance: f32,
     enclosure: f32,
     exposure: f32,
+    surface: f32,
     sent_occlusion: f32,
 }
 
@@ -142,6 +143,7 @@ impl RainSound {
             self.roof_distance = 15.0;
             self.enclosure = 0.0;
             self.exposure = 1.0;
+            self.surface = 0.0;
         }
 
         // the sky glides to the last measure (open all round until one)
@@ -154,14 +156,18 @@ impl RainSound {
         self.roof_distance += (sky.roof_distance - self.roof_distance) * k;
         self.enclosure += (sky.enclosure - self.enclosure) * k;
         self.exposure += (sky.exposure - self.exposure) * k;
+        self.surface += (sky.surface - self.surface) * k;
+        // high above what the rain lands on (flying): only a faint, soft
+        // hiss from far below; the loops' mix leans to the light one
+        let aloft = if input.underwater > 0.0 { 0.0 } else { smoothstep(6.0, 38.0, self.surface) };
         // under the water: the rain on the surface, muffled, fading with
         // the depth; no roof
         let under = input.underwater > 0.0;
         let depth_fade = if under { (-input.underwater / 3.0).exp() * 0.7 } else { 1.0 };
 
         // the loops' mix: equal power, more of it the harder it rains
-        let level = LEVEL * rain.sqrt() * depth_fade;
-        let angle = rain * std::f32::consts::FRAC_PI_2;
+        let level = LEVEL * rain.sqrt() * depth_fade * (1.0 - 0.75 * aloft);
+        let angle = rain * (1.0 - 0.6 * aloft) * std::f32::consts::FRAC_PI_2;
         let light = angle.cos() * 10f32.powf(LIGHT_MAKEUP_DB / 20.0) * level;
         let heavy = angle.sin() * 10f32.powf(HEAVY_MAKEUP_DB / 20.0) * level;
 
@@ -196,7 +202,7 @@ impl RainSound {
         // is in sight and they stay clear; each speaker's own side is
         // already as loud as rain is heard there); under the water, as
         // through two walls
-        let occlusion = if under { 1.0 } else { 1.0 - smoothstep(0.03, 0.3, self.exposure) };
+        let occlusion = if under { 1.0 } else { (1.0 - smoothstep(0.03, 0.3, self.exposure)).max(0.5 * aloft) };
         if (occlusion - self.sent_occlusion).abs() > 0.02 {
             for i in 0..8 {
                 engine.world_occlusion(VOICE_BASE + i, occlusion);

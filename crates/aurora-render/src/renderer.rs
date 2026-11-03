@@ -2003,7 +2003,11 @@ fn begin_scene_b_on<'a>(
 /// [`RAIN_WET_SNAP`] m (it moves only after the camera has; the update reads
 /// the last one at the same places). `soak`: how wet a place new to it is
 /// (it rises as the rain goes on, then dries); the ground is drawn wet
-/// while that is above [`RAIN_WET_DRY`].
+/// while that is above [`RAIN_WET_DRY`]. `level`: how much water is
+/// standing about (the puddles' size and how soaked the ground looks). It
+/// fills toward the rain's strength the longer it rains, and drains slowly
+/// when the rain eases or stops, so turning the rain down does not shrink
+/// the puddles at once.
 #[derive(Default)]
 struct RainWet {
     origin: Option<Vec2>,
@@ -2021,10 +2025,13 @@ const RAIN_WET_DRY: f32 = 0.02;
 /// after (s).
 const RAIN_SOAK_SECS: f32 = 8.0;
 const RAIN_DRY_SECS: f32 = 120.0;
+/// How fast the standing water fills (s, at full rain) and drains (s).
+const RAIN_FILL_SECS: f32 = 25.0;
+const RAIN_DRAIN_SECS: f32 = 150.0;
 
 impl RainWet {
     fn active(&self) -> bool {
-        self.soak > RAIN_WET_DRY || self.level > 0.0 && self.last.is_some() && self.soak > 0.0
+        (self.soak > RAIN_WET_DRY || self.level > RAIN_WET_DRY) && self.last.is_some()
     }
 
     /// One frame of a rain of `rain` with the camera at `at`.
@@ -2032,15 +2039,20 @@ impl RainWet {
         let now = Instant::now();
         let dt = self.last.map_or(0.0, |t| now.duration_since(t).as_secs_f32().min(1.0));
         let rain = rain.clamp(0.0, 1.0);
+        if rain > self.level {
+            self.level += (rain - self.level) * (1.0 - (-dt * (0.5 + rain) / RAIN_FILL_SECS).exp());
+        } else {
+            self.level += (rain - self.level) * (1.0 - (-dt / RAIN_DRAIN_SECS).exp());
+        }
         if rain > 0.0 {
-            self.level = rain;
+            self.level = self.level.max(1e-3);
             self.soak += (1.0 - self.soak) * (1.0 - (-dt * (0.5 + rain) / RAIN_SOAK_SECS).exp());
             self.soak = self.soak.max(1e-3);
         } else {
             self.soak *= (-dt / RAIN_DRY_SECS).exp();
         }
         let was = self.origin;
-        let active = rain > 0.0 || self.soak > RAIN_WET_DRY;
+        let active = rain > 0.0 || self.soak > RAIN_WET_DRY || self.level > RAIN_WET_DRY;
         if !active {
             *self = RainWet::default();
             return;

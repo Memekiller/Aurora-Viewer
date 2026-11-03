@@ -800,7 +800,8 @@ fn weather_section(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
             );
             ui.add_enabled(w.thunder, egui::Slider::new(&mut w.thunder_frequency, 0.0..=1.0).show_value(false));
         });
-        // quality (not yet)
+        // quality: how much of the weather is drawn (the graphics levels
+        // set it too)
         ui.horizontal(|ui| {
             row_label(
                 ui,
@@ -816,11 +817,13 @@ fn weather_section(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
                 WeatherQuality::Medium => 1,
                 WeatherQuality::High => 2,
             };
-            ui.add_enabled_ui(false, |ui| {
-                widgets::segmented(ui, p, &mut i, &[(low, true), (medium, true), (high, true)]);
-            })
-            .response
-            .on_disabled_hover_text(soon);
+            if widgets::segmented(ui, p, &mut i, &[(low, true), (medium, true), (high, true)]) {
+                w.quality = match i {
+                    0 => WeatherQuality::Low,
+                    1 => WeatherQuality::Medium,
+                    _ => WeatherQuality::High,
+                };
+            }
         });
         // the regions' weather (not yet; off until chosen)
         ui.add_enabled_ui(false, |ui| {

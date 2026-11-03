@@ -2082,14 +2082,24 @@ impl Backend {
     /// to it, where the camera goes, from it); with the shadows off too,
     /// alone in the atlas (low settings keep the rain out of the houses).
     fn rain_shelter(&self, f: &FrameParams) -> bool {
-        rain_drops(f.rain) > 0 || !f.cutout && self.rain_wet.active()
+        rain_drops(f.rain, f.rain_look.quality) > 0 || !f.cutout && self.rain_wet.active()
     }
 }
 
 /// Rain prototype: the drops drawn for a rain of `rain` (0..1); 1, a
-/// downpour, is 45,000 drops.
-fn rain_drops(rain: f32) -> u32 {
-    (rain.clamp(0.0, 1.0) * 45_000.0) as u32
+/// downpour, is 45,000 drops at the High weather quality.
+fn rain_drops(rain: f32, quality: u32) -> u32 {
+    (rain.clamp(0.0, 1.0) * 45_000.0 * rain_share(quality)) as u32
+}
+
+/// Rain prototype: the share of the drops and splashes drawn at a weather
+/// quality (0 low, 1 medium, 2 high).
+fn rain_share(quality: u32) -> f32 {
+    match quality {
+        0 => 0.45,
+        1 => 0.7,
+        _ => 1.0,
+    }
 }
 
 /// Rain prototype tuning: `AURORA_RAIN_SPEED=<scale>`, the drops' speed
@@ -5474,7 +5484,12 @@ impl Backend {
         u.rain = [f.rain.clamp(0.0, 1.0), area[0], area[1], area[2]];
         u.rain_wet = self.rain_wet.uniform;
         u.rain_wet_step = self.rain_wet.step;
-        u.rain_look = [f32::from(u8::from(f.rain_look.puddles)), f.rain_look.distance, 0.0, 0.0];
+        u.rain_look = [
+            f32::from(u8::from(f.rain_look.puddles)),
+            f.rain_look.distance,
+            f.rain_look.quality.min(2) as f32,
+            0.0,
+        ];
         u.rain_wind = [f.rain_look.drift[0], f.rain_look.drift[1], f.rain_look.wind[0], f.rain_look.wind[1]];
         u.selection_color = f.selection_color;
         u.rez_gradient = f.rez_gradient;
@@ -7893,7 +7908,7 @@ impl Backend {
                 .encode(&self.device, &mut encoder, color, depth, HDR_FORMAT, samples);
         }
         let water_particles = if f.cutout { 0 } else { self.water_effects.particles };
-        let rain_drops = if f.cutout { 0 } else { rain_drops(f.rain) };
+        let rain_drops = if f.cutout { 0 } else { rain_drops(f.rain, f.rain_look.quality) };
         // rain prototype: the wetness memory, from the last one and the
         // shelter map, then copied where it is read
         let rain_wet = !f.cutout && self.rain_wet.active();
@@ -8129,7 +8144,7 @@ impl Backend {
                 pass.draw(0..6, 0..rain_drops);
                 // splashes: 6 droplets of 6 vertices; up to 9,000 places
                 pass.set_pipeline(&self.pipelines.rain_splash);
-                pass.draw(0..36, 0..(f.rain.clamp(0.0, 1.0) * 9_000.0) as u32);
+                pass.draw(0..36, 0..(f.rain.clamp(0.0, 1.0) * 9_000.0 * rain_share(f.rain_look.quality)) as u32);
                 // beyond the drops' box: the distant rain's layers
                 pass.set_pipeline(&self.pipelines.rain_far);
                 pass.draw(0..3, 0..1);

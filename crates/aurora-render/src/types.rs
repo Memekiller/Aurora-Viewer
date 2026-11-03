@@ -1258,6 +1258,10 @@ pub struct RainLook {
     pub wind: [f32; 2],
     /// How far the wind has carried the drops so far (m).
     pub drift: [f32; 2],
+    /// How much of the weather is drawn: 0 low, 1 medium, 2 high (the
+    /// drops and splashes, the distant rain's layers, the puddles' ring
+    /// layers and their reflections).
+    pub quality: u32,
 }
 
 impl Default for RainLook {
@@ -1267,6 +1271,7 @@ impl Default for RainLook {
             distance: 38.0,
             wind: [0.0; 2],
             drift: [0.0; 2],
+            quality: 2,
         }
     }
 }

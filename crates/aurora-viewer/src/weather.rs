@@ -131,6 +131,11 @@ impl WeatherSettings {
             distance: self.puddle_distance.clamp(*PUDDLE_DISTANCE.start(), *PUDDLE_DISTANCE.end()),
             wind: wind.now.to_array(),
             drift: wind.drift.to_array(),
+            quality: match self.quality {
+                WeatherQuality::Low => 0,
+                WeatherQuality::Medium => 1,
+                WeatherQuality::High => 2,
+            },
         }
     }
 }

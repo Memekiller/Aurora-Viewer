@@ -1887,6 +1887,11 @@ fn vs_rain_wet(@builtin(vertex_index) vertex: u32) -> RainWetOut {
     return out;
 }
 
+// The Weather quality setting: 0 low, 1 medium, 2 high.
+fn rain_quality() -> i32 {
+    return i32(frame.rain_look.z + 0.5);
+}
+
 // How much of the rings a pixel can show: their crests are about 10 cm
 // apart, so a pixel covering more than a few cm of the surface (far, or at a
 // grazing angle) would turn them into sparkle; they fade out instead.
@@ -1934,9 +1939,15 @@ fn rain_ripples(xy: vec2<f32>, time: f32) -> vec2<f32> {
 // reflections break up instead of staying a mirror. `detail`: what the
 // pixels can show of it (`rain_ring_detail`).
 fn rain_water_churn(xy: vec2<f32>, time: f32, heavy: f32, detail: f32) -> vec2<f32> {
+    // the layers the Weather quality draws: one at Low, two at Medium
+    let quality = rain_quality();
     var slope = rain_ripples_layer(xy, time, 0.6, 0.9, 0u);
-    slope += rain_ripples_layer(xy + vec2<f32>(0.21, 0.37), time, 0.37, 0.7, 0x9e3779b9u) * smoothstep(0.25, 0.65, heavy);
-    slope += rain_ripples_layer(xy + vec2<f32>(0.53, 0.11), time, 0.23, 0.55, 0x85ebca6bu) * smoothstep(0.55, 0.95, heavy);
+    if (quality >= 1 && heavy > 0.25) {
+        slope += rain_ripples_layer(xy + vec2<f32>(0.21, 0.37), time, 0.37, 0.7, 0x9e3779b9u) * smoothstep(0.25, 0.65, heavy);
+    }
+    if (quality >= 2 && heavy > 0.55) {
+        slope += rain_ripples_layer(xy + vec2<f32>(0.53, 0.11), time, 0.23, 0.55, 0x85ebca6bu) * smoothstep(0.55, 0.95, heavy);
+    }
     let t = time * 9.0;
     let chop = vec2<f32>(
         sin(xy.x * 37.0 + t + sin(xy.y * 23.0 - t * 0.7) * 2.0) + sin(xy.y * 29.0 - t * 1.3),
@@ -1967,10 +1978,14 @@ fn rain_reflect_probe(p: vec3<f32>) -> vec4<f32> {
 fn rain_puddle_reflection(world: vec3<f32>, r: vec3<f32>) -> vec3<f32> {
     let cam = frame.camera_pos.xyz;
     let start = distance(world, cam);
+    // the Weather quality: no march at Low (the sky only), a shorter one
+    // at Medium (12 steps reach about 30 m, 20 about 280 m)
+    let quality = rain_quality();
+    let steps = select(select(20, 12, quality == 1), 0, quality <= 0);
     var t = 0.2;
     var prev_t = 0.0;
     var prev_gap = -1.0;
-    for (var k = 0; k < 20; k++) {
+    for (var k = 0; k < steps; k++) {
         let probe = rain_reflect_probe(world + r * t);
         if (probe.w < 0.0) { break; }
         let gap = probe.z;
@@ -2609,7 +2624,10 @@ fn rain_far_streaks(anchor: vec2<f32>, d: vec3<f32>, scene: f32, pixel: f32, hea
     let across_view = normalize(frame.cam_right.xy + vec2<f32>(1e-6, 0.0));
     let slant = clamp(-dot(frame.rain_wind.zw, across_view) / speed, -1.7, 1.7);
     var lift = 0.0;
-    for (var k = 0; k < 4; k++) {
+    // the layers the Weather quality draws: the two nearest at Low, three at
+    // Medium
+    let layers = rain_quality() + 2;
+    for (var k = 0; k < layers; k++) {
         let radius = far[k];
         // where the view leaves the cylinder (the camera is inside it)
         let c = dot(o, o) - radius * radius;

@@ -1752,14 +1752,38 @@ fn rain_sheltered(world: vec3<f32>) -> f32 {
 // roof upwind), so that a building leaves a dry zone on its lee side and no
 // drop comes out of a wall. Three points up the path of a drop of middling
 // speed (about 6.5 m/s, the slant of `carried` over `speed`).
-fn rain_sheltered_slanted(world: vec3<f32>) -> f32 {
-    var covered = rain_sheltered(world);
+// How far a drop drifts sideways for each metre it falls, in the wind now
+// (no more than about 70° from the vertical).
+fn rain_slant() -> vec2<f32> {
     let slope = frame.rain_wind.zw / 6.5;
     let flat = dot(slope, slope);
-    if (flat < 0.0025 || covered > 0.99) { return covered; }
-    // no more than about 70° from the vertical
-    let s = slope * min(1.0, 2.75 / sqrt(flat));
-    let up = array<f32, 3>(1.2, 3.5, 8.0);
+    if (flat < 1e-8) { return vec2<f32>(0.0); }
+    return slope * min(1.0, 2.75 / sqrt(flat));
+}
+
+// Heights up a drop's path at which it is tested against the cover.
+const RAIN_PATH_UP = array<f32, 3>(1.2, 3.5, 8.0);
+
+// The height above which the slanted rain reaches at `xy`: the topmost
+// surface there, or higher where cover upwind keeps it off (a surface `top`
+// high, `dz` up the path, shelters everything below `top - dz` here).
+fn rain_reached_height(xy: vec2<f32>, near_z: f32) -> f32 {
+    var top = rain_surface_height(xy, near_z);
+    let s = rain_slant();
+    if (top < -1e8 || dot(s, s) < 0.0025) { return top; }
+    for (var i = 0; i < 3; i++) {
+        let dz = RAIN_PATH_UP[i];
+        let up = rain_surface_height(xy - s * dz, near_z);
+        if (up > -1e8) { top = max(top, up - dz); }
+    }
+    return top;
+}
+
+fn rain_sheltered_slanted(world: vec3<f32>) -> f32 {
+    var covered = rain_sheltered(world);
+    let s = rain_slant();
+    if (dot(s, s) < 0.0025 || covered > 0.99) { return covered; }
+    let up = RAIN_PATH_UP;
     for (var i = 0; i < 3; i++) {
         covered = max(covered, rain_sheltered(world + vec3<f32>(-s * up[i], up[i])));
         if (covered > 0.99) { break; }
@@ -2050,7 +2074,8 @@ fn fs_rain_wet_update(in: RainWetOut) -> @location(0) vec4<f32> {
         }
     }
     let heavy = frame.rain.x;
-    let top = rain_surface_height(xy, frame.camera_pos.z);
+    // slanted in the wind: ground in the lee of cover stays dry
+    let top = rain_reached_height(xy, frame.camera_pos.z);
     if (!known) {
         // new here (the camera came this way): as wet as everywhere else
         // in the open, raining or drying, as if it had been seen all along
@@ -2234,7 +2259,7 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
     // how wet: the memory (wet for a while after the rain, and under cover
     // that only passed), else the shelter now
     var open = rain_wet_memory(world + n * 0.05);
-    if (open < 0.0) { open = (1.0 - rain_sheltered(world + n * 0.08)) * step(1e-4, frame.rain.x); }
+    if (open < 0.0) { open = (1.0 - rain_sheltered_slanted(world + n * 0.08)) * step(1e-4, frame.rain.x); }
     let raining = frame.rain.x;
     // the standing water: how long and hard it has rained, not the rain now
     let heavy = frame.rain_wet.w;
@@ -2435,7 +2460,7 @@ fn rain_water_rings(world: vec3<f32>, footprint: f32) -> vec2<f32> {
     if (heavy <= 0.0) { return vec2<f32>(0.0); }
     let reach = 1.0 - smoothstep(30.0, 45.0, distance(world, frame.camera_pos.xyz));
     if (reach <= 0.0) { return vec2<f32>(0.0); }
-    let open = 1.0 - rain_sheltered(world + vec3<f32>(0.0, 0.0, 0.1));
+    let open = 1.0 - rain_sheltered_slanted(world + vec3<f32>(0.0, 0.0, 0.1));
     return rain_water_churn(world.xy, frame.camera_pos.w, heavy, rain_ring_detail(footprint)) * (0.35 * sqrt(heavy) * reach * open);
 }
 
@@ -2495,8 +2520,11 @@ fn vs_rain_splash(@builtin(vertex_index) vertex: u32, @builtin(instance_index) i
     let base = vec2<f32>(rain_rand(seed), rain_rand(seed + 1u)) * SPLASH_AREA;
     let corner = cam.xy - vec2<f32>(SPLASH_AREA * 0.5);
     let xy = corner + (base - corner - floor((base - corner) / SPLASH_AREA) * SPLASH_AREA);
-    let ground = max(rain_surface_height(xy, cam.z), frame.params.y);
+    let surface = rain_surface_height(xy, cam.z);
+    let ground = max(surface, frame.params.y);
     if (ground < -1e8 || abs(ground - cam.z) > 40.0) { return rain_splash_none(); }
+    // none in the lee of cover, where the slanted rain does not reach
+    if (surface > -1e8 && rain_reached_height(xy, cam.z) > surface + 0.05) { return rain_splash_none(); }
 
     // one droplet: thrown up and out (harder in heavier rain, its drops are
     // bigger), then falling back

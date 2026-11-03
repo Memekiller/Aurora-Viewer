@@ -1896,27 +1896,51 @@ fn rain_water_churn(xy: vec2<f32>, time: f32, heavy: f32, detail: f32) -> vec2<f
     return slope * detail;
 }
 
-// What a puddle mirrors along `r`: a short march through the depth prepass,
-// the scene copy where the ray passes behind something, else the sky.
-fn rain_puddle_reflection(world: vec3<f32>, r: vec3<f32>) -> vec3<f32> {
+// The screen position of `p` and how far behind what the depth prepass
+// saw there it is (m, along the view; > 0: behind it). w < 0: off screen.
+fn rain_reflect_probe(p: vec3<f32>) -> vec4<f32> {
+    let clip = frame.view_proj * vec4<f32>(p, 1.0);
+    if (clip.w <= 0.0) { return vec4<f32>(0.0, 0.0, 0.0, -1.0); }
+    let ndc = clip.xy / clip.w;
+    let suv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0) { return vec4<f32>(0.0, 0.0, 0.0, -1.0); }
+    let d = scene_depth_at(suv);
+    if (d <= 0.0) { return vec4<f32>(suv, -1e9, 1.0); }
     let cam = frame.camera_pos.xyz;
+    return vec4<f32>(suv, distance(p, cam) - distance(world_from_depth(suv, d), cam), 1.0);
+}
+
+// What a puddle mirrors along `r`: a march through the depth prepass. A
+// hit is where the ray passes from in front of a surface to behind it,
+// refined to where it crosses, and only if that surface is thin there;
+// a ray that slips behind an object's edge is not the object (each
+// object's reflection would grow a fringe, speckled by the ripples).
+fn rain_puddle_reflection(world: vec3<f32>, r: vec3<f32>) -> vec3<f32> {
     var t = 0.2;
-    for (var k = 0; k < 16; k++) {
-        let p = world + r * t;
-        let clip = frame.view_proj * vec4<f32>(p, 1.0);
-        if (clip.w <= 0.0) { break; }
-        let ndc = clip.xy / clip.w;
-        let suv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
-        if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0) { break; }
-        let d = scene_depth_at(suv);
-        if (d > 0.0) {
-            let behind = world_from_depth(suv, d);
-            let gap = distance(p, cam) - distance(behind, cam);
-            if (gap > 0.0 && gap < t * 0.4 + 0.3) {
-                return textureSampleLevel(scene_tex, lin_clamp, suv, 0.0).rgb;
+    var prev_t = 0.0;
+    var prev_gap = -1.0;
+    for (var k = 0; k < 20; k++) {
+        let probe = rain_reflect_probe(world + r * t);
+        if (probe.w < 0.0) { break; }
+        let gap = probe.z;
+        if (gap > 0.0 && prev_gap <= 0.0) {
+            // crossed between prev_t and t: halve down to it
+            var lo = prev_t;
+            var hi = t;
+            var at = probe;
+            for (var b = 0; b < 5; b++) {
+                let mid = (lo + hi) * 0.5;
+                let m = rain_reflect_probe(world + r * mid);
+                if (m.w < 0.0) { break; }
+                if (m.z > 0.0) { hi = mid; at = m; } else { lo = mid; }
+            }
+            if (at.z < 0.08 + hi * 0.02) {
+                return textureSampleLevel(scene_tex, lin_clamp, at.xy, 0.0).rgb;
             }
         }
-        t *= 1.32;
+        prev_gap = gap;
+        prev_t = t;
+        t *= 1.25;
     }
     return sky_color(vec3<f32>(r.xy, abs(r.z)));
 }

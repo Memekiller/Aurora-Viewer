@@ -455,9 +455,12 @@ fn spot_shadow_views(f: &FrameParams) -> [Option<(SpotShadow, Mat4)>; SPOT_SHADO
         let light = f.lights.get(s.light as usize).filter(|_| (s.light as usize) < MAX_LIGHTS)?;
         Some((s, light.projector?.shadow_matrix))
     });
-    // Rain prototype: a free last map becomes the shelter map, the depth of
-    // what is overhead seen straight down. No light uses it (light -1).
-    if f.shadows && rain_drops(f.rain) > 0 && views[RAIN_SHELTER_MAP].is_none() {
+    // Rain prototype: while it rains, the last map is the shelter map, the
+    // depth of what is overhead seen straight down, before a projector's
+    // (that projector, the second that weighs most on screen, casts no
+    // shadow meanwhile: a third map would need a third culling bin). No
+    // light uses it (light -1).
+    if f.shadows && rain_drops(f.rain) > 0 {
         views[RAIN_SHELTER_MAP] = Some((
             SpotShadow {
                 light: u32::MAX,

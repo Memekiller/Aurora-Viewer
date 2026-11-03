@@ -1157,7 +1157,10 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         wave2 = wave1;
         wave3 = wave1;
     }
-    let wavef = (wave1 + wave2 * 0.4 + wave3 * 0.6) * 0.5;
+    var wavef = (wave1 + wave2 * 0.4 + wave3 * 0.6) * 0.5;
+    // rain prototype: the puddles' rings in the waves themselves, so they
+    // bend the reflection and the refraction and ride the waves
+    wavef = vec3<f32>(wavef.xy + rain_water_rings(in.world_pos), wavef.z);
     var n = wavef * frame.water_normal.xyz;
     n.z *= 2.0;
     let footprint=max(length(dpdx(in.world_pos.xy)),length(dpdy(in.world_pos.xy)));
@@ -1760,6 +1763,8 @@ fn rain_lamps(world: vec3<f32>, frag: vec2<f32>, view: vec3<f32>) -> vec3<f32> {
 @fragment
 fn fs_rain(in: RainOut) -> @location(0) vec4<f32> {
     if (in.life <= 0.001) { discard; }
+    // no rain under the water, nor seen from under it
+    if (in.world.z < frame.params.y || camera_underwater()) { discard; }
     // a thin cylinder of water seen from the side: its normal sweeps from
     // the side to the camera across the streak; its ends taper
     let across = in.uv.x;
@@ -2020,4 +2025,16 @@ fn fs_rain_wet_g(in: RainWetOut) -> @location(0) vec4<f32> {
     }
     if (out.a < 0.01) { discard; }
     return out;
+}
+
+// ------------------------------------------------- rain on water (prototype)
+// The puddles' rings (`rain_ripples`) as a slope added to the water's waves
+// (`water_pixel`): open to the sky, within reach, above the water.
+fn rain_water_rings(world: vec3<f32>) -> vec2<f32> {
+    let heavy = frame.rain.x;
+    if (heavy <= 0.0) { return vec2<f32>(0.0); }
+    let reach = 1.0 - smoothstep(30.0, 45.0, distance(world, frame.camera_pos.xyz));
+    if (reach <= 0.0) { return vec2<f32>(0.0); }
+    let open = 1.0 - rain_sheltered(world + vec3<f32>(0.0, 0.0, 0.1));
+    return rain_ripples(world.xy, frame.camera_pos.w) * (0.35 * sqrt(heavy) * reach * open);
 }

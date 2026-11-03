@@ -10321,7 +10321,7 @@ impl App {
         if self.env_ui.rain() > 0.0 {
             self.rain_last = Some(Instant::now());
         }
-        let raining = self.rain_last.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(480));
+        let raining = self.rain_last.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(600));
         self.scene.update_rain_ground(&self.world, fp.camera_pos, raining);
         let lists = if self.in_world() && !self.scene.textures.drawing_paused() {
             &self.scene.lists

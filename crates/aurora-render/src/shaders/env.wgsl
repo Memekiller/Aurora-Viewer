@@ -1974,13 +1974,14 @@ fn fs_rain_wet_update(in: RainWetOut) -> @location(0) vec4<f32> {
         }
     }
     let heavy = frame.rain.x;
-    if (heavy > 0.0) {
-        let top = rain_surface_height(xy, frame.camera_pos.z);
-        if (!known) {
-            // new here: as if it had rained on it all along
-            wet_h = select(-1e9, top, top > -1e8);
-            amount = step.w;
-        } else {
+    let top = rain_surface_height(xy, frame.camera_pos.z);
+    if (!known) {
+        // new here (the camera came this way): as wet as everywhere else
+        // in the open, raining or drying, as if it had been seen all along
+        wet_h = select(-1e9, top, top > -1e8);
+        amount = step.w;
+    } else if (heavy > 0.0) {
+        {
             if (top > -1e8) {
                 if (top < wet_h) {
                     // something lower opened to the sky: wet from now
@@ -1993,10 +1994,6 @@ fn fs_rain_wet_update(in: RainWetOut) -> @location(0) vec4<f32> {
             amount += (1.0 - amount) * (1.0 - exp(-dt * (0.5 + heavy) / 8.0));
         }
     } else {
-        if (!known) {
-            wet_h = 1e9;
-            amount = 0.0;
-        }
         amount *= exp(-dt / 120.0);
     }
     return vec4<f32>(wet_h, amount, 0.0, 1.0);

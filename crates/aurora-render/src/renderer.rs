@@ -457,18 +457,19 @@ impl Smaa {
 /// The projector shadow maps of a frame: each projector of the frame's list
 /// that casts shadows, with the view-projection of its map. None without
 /// shadows (reflections, probe faces and impostor pictures draw none).
-fn spot_shadow_views(f: &FrameParams) -> [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] {
+fn spot_shadow_views(f: &FrameParams, shelter: bool) -> [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] {
     let mut views = f.spot_shadows.map(|s| {
         let s = s.filter(|_| f.shadows)?;
         let light = f.lights.get(s.light as usize).filter(|_| (s.light as usize) < MAX_LIGHTS)?;
         Some((s, light.projector?.shadow_matrix))
     });
-    // Rain prototype: while it rains, the last map is the shelter map, the
+    // Rain prototype: while it rains (or the ground is still wet:
+    // `shelter`, see `Backend::rain_shelter`), the last map is the shelter map, the
     // depth of what is overhead seen straight down, before a projector's
     // (that projector, the second that weighs most on screen, casts no
     // shadow meanwhile: a third map would need a third culling bin). No
     // light uses it (light -1).
-    if f.shadows && rain_drops(f.rain) > 0 {
+    if shelter {
         views[RAIN_SHELTER_MAP] = Some((
             SpotShadow {
                 light: u32::MAX,
@@ -2064,6 +2065,15 @@ impl RainWet {
         self.uniform = [origin.x, origin.y, RAIN_WET_EXTENT, self.level];
         self.step = [prev.x, prev.y, if fresh { -1.0 } else { dt }, self.soak];
         self.last = Some(now);
+    }
+}
+
+impl Backend {
+    /// Rain prototype: the shelter map is drawn while it rains, and after,
+    /// while the ground is still wet (the wetness memory fills in places new
+    /// to it, where the camera goes, from it).
+    fn rain_shelter(&self, f: &FrameParams) -> bool {
+        f.shadows && (rain_drops(f.rain) > 0 || !f.cutout && self.rain_wet.active())
     }
 }
 
@@ -5567,7 +5577,7 @@ impl Backend {
             }
         }
         u.spot_lights = [-1; 4];
-        for (k, (spot, vp)) in spot_shadow_views(f).into_iter().enumerate().filter_map(|(k, v)| Some((k, v?))) {
+        for (k, (spot, vp)) in spot_shadow_views(f, self.rain_shelter(f)).into_iter().enumerate().filter_map(|(k, v)| Some((k, v?))) {
             u.spot_vp[k] = vp.to_cols_array_2d();
             u.spot_lights[k] = spot.light as i32;
             u.spot_fade[k] = 1.0 - spot.fade.clamp(0.0, 1.0);
@@ -6450,7 +6460,7 @@ impl Backend {
             );
         }
         // projector shadow maps of the frame (none without shadows)
-        let spot_vp: [Option<Mat4>; SPOT_SHADOWS] = spot_shadow_views(f).map(|v| v.map(|(_, m)| m));
+        let spot_vp: [Option<Mat4>; SPOT_SHADOWS] = spot_shadow_views(f, self.rain_shelter(f)).map(|v| v.map(|(_, m)| m));
         for (i, m) in cascades.iter().copied().map(Some).chain(spot_vp).enumerate() {
             let Some(m) = m else { continue };
             let u = ShadowU {
@@ -6769,7 +6779,7 @@ impl Backend {
                 (profile(), frame_flags::SHADOW_STATS),
                 (!shadow_depth_only, frame_flags::SHADOW_ALPHA_ALL),
                 (crate::shadow_cull::blend_casts(), frame_flags::BLEND_CASTS),
-                (f.shadows && rain_drops(f.rain) > 0, frame_flags::SPOT_SHELTER),
+                (self.rain_shelter(f), frame_flags::SPOT_SHELTER),
             ] {
                 if on {
                     flags |= bit;

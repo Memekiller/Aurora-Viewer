@@ -148,9 +148,10 @@ impl EnvEditorUi {
         self.save_as = Some(self.name.clone());
     }
 
-    /// The tab shown (sky: Atmosphere & Lighting, Clouds, Sun & Moon).
+    /// The tab shown (sky: Atmosphere & Lighting, Clouds, Sun & Moon, and
+    /// Aurora's own Aurora Weather).
     pub fn set_tab(&mut self, tab: usize) {
-        self.tab = tab.min(2);
+        self.tab = tab.min(3);
     }
 
     /// Edit `doc` (a snapshot, an import, or a loaded item).
@@ -270,6 +271,7 @@ impl EnvEditorUi {
                     (aurora_i18n::tr!("ui-env-editor-atmosphere"), true),
                     (aurora_i18n::tr!("ui-environment-clouds"), true),
                     (aurora_i18n::tr!("ui-env-editor-sun-moon"), true),
+                    (aurora_i18n::tr!("ui-weather-aurora"), true),
                 ],
             );
             ui.add_space(4.0);
@@ -294,6 +296,7 @@ impl EnvEditorUi {
                     _ => match self.tab {
                         1 => self.clouds_panel(ui, p, images, out),
                         2 => self.sun_moon_panel(ui, p, images, out),
+                        3 => self.weather_panel(ui, p),
                         _ => self.atmosphere_panel(ui, p, out),
                     },
                 });
@@ -606,6 +609,150 @@ impl EnvEditorUi {
     pub(crate) fn demo_cloud_picker(&mut self) {
         if let Some(doc) = &self.doc {
             self.open_texture(TexSlot::Cloud, aurora_i18n::tr!("ui-env-editor-cloud-image"), doc.sky().cloud_id);
+        }
+    }
+
+    /// "Aurora Weather" (Aurora's own): the weather this sky sets for the
+    /// viewers that let regions set it, kept as a code at the end of its
+    /// name (weather/region.rs: the names reach every viewer, a
+    /// description does not). Saving the sky saves it.
+    fn weather_panel(&mut self, ui: &mut egui::Ui, p: &Palette) {
+        use crate::weather::Precipitation;
+        use crate::weather::region::{CODE_LEN, RegionWeather, WINDOWS, strip_code};
+        use aurora_i18n::tr;
+        let base = strip_code(&self.name).to_owned();
+        let found = RegionWeather::from_name(&self.name);
+        let mut on = found.is_some();
+        let mut w = found.unwrap_or_default();
+        let before = (on, w);
+        ui.label(RichText::new(tr!("ui-env-editor-weather-note")).size(11.5).color(p.muted));
+        ui.add_space(6.0);
+        widgets::checkbox(ui, p, &mut on, tr!("ui-env-editor-weather-enable"));
+        ui.add_space(4.0);
+        ui.spacing_mut().slider_width = 200.0;
+        let step7 = |ui: &mut egui::Ui, v: &mut f32| {
+            ui.add(
+                egui::Slider::new(v, 0.0..=1.0)
+                    .step_by(1.0 / 7.0)
+                    .custom_formatter(|v, _| format!("{:.0} %", v * 100.0)),
+            )
+            .changed()
+        };
+        ui.add_enabled_ui(on, |ui| {
+            egui::Grid::new("env_editor_weather")
+                .num_columns(2)
+                .spacing(Vec2::new(10.0, 6.0))
+                .show(ui, |ui| {
+                    ui.label(tr!("ui-weather-precipitation"));
+                    let mut i = usize::from(w.precipitation == Precipitation::Snow);
+                    if widgets::segmented(ui, p, &mut i, &[(tr!("ui-weather-rain"), true), (tr!("ui-weather-snow"), true)]) {
+                        w.precipitation = if i == 0 { Precipitation::Rain } else { Precipitation::Snow };
+                    }
+                    ui.end_row();
+                    ui.label(tr!("ui-env-editor-weather-chance"))
+                        .on_hover_text(tr!("ui-env-editor-weather-chance-tip"));
+                    ui.add(
+                        egui::Slider::new(&mut w.chance, 0.0..=1.0)
+                            .step_by(1.0 / 15.0)
+                            .custom_formatter(|v, _| format!("{:.0} %", v * 100.0)),
+                    );
+                    ui.end_row();
+                    ui.label(tr!("ui-env-editor-weather-window"))
+                        .on_hover_text(tr!("ui-env-editor-weather-window-tip"));
+                    let length = |m: u16| {
+                        if m < 60 {
+                            tr!("ui-env-editor-weather-minutes", n = i64::from(m)).to_string()
+                        } else if m.is_multiple_of(60) {
+                            tr!("ui-env-editor-weather-hours", n = i64::from(m / 60)).to_string()
+                        } else {
+                            format!(
+                                "{} {}",
+                                tr!("ui-env-editor-weather-hours", n = i64::from(m / 60)),
+                                tr!("ui-env-editor-weather-minutes", n = i64::from(m % 60))
+                            )
+                        }
+                    };
+                    egui::ComboBox::from_id_salt("env_editor_weather_window")
+                        .selected_text(length(WINDOWS[usize::from(w.window.min(15))]))
+                        .show_ui(ui, |ui| {
+                            for (i, m) in WINDOWS.iter().enumerate() {
+                                ui.selectable_value(&mut w.window, i as u8, length(*m));
+                            }
+                        });
+                    ui.end_row();
+                    ui.label(tr!("ui-env-editor-weather-amount-from"));
+                    if step7(ui, &mut w.amount.0) {
+                        w.amount.1 = w.amount.1.max(w.amount.0);
+                    }
+                    ui.end_row();
+                    ui.label(tr!("ui-env-editor-weather-amount-to"));
+                    if step7(ui, &mut w.amount.1) {
+                        w.amount.0 = w.amount.0.min(w.amount.1);
+                    }
+                    ui.end_row();
+                    ui.label(tr!("ui-weather-wind"));
+                    if step7(ui, &mut w.wind.0) {
+                        w.wind.1 = w.wind.1.max(w.wind.0);
+                    }
+                    ui.end_row();
+                    ui.label(tr!("ui-weather-gusts"));
+                    if step7(ui, &mut w.wind.1) {
+                        w.wind.0 = w.wind.0.min(w.wind.1);
+                    }
+                    ui.end_row();
+                    ui.label(tr!("ui-weather-wind-from"));
+                    ui.horizontal(|ui| {
+                        let mut region = w.wind_from.is_none();
+                        if widgets::checkbox(ui, p, &mut region, tr!("ui-weather-wind-follow-region")).changed() {
+                            w.wind_from = if region { None } else { Some(270.0) };
+                        }
+                        if let Some(from) = &mut w.wind_from {
+                            ui.spacing_mut().slider_width = 120.0;
+                            ui.add(
+                                egui::Slider::new(from, 0.0..=337.5)
+                                    .step_by(22.5)
+                                    .custom_formatter(|v, _| format!("{v:.1}° {}", crate::ui::environment::compass_point(v as f32))),
+                            );
+                        }
+                    });
+                    ui.end_row();
+                    ui.label(tr!("ui-weather-thunder"));
+                    widgets::checkbox(ui, p, &mut w.thunder, "");
+                    ui.end_row();
+                    ui.label(tr!("ui-weather-strikes"));
+                    ui.add_enabled_ui(w.thunder, |ui| {
+                        ui.add(egui::Slider::new(&mut w.strikes, 0.0..=1.0).step_by(1.0 / 3.0).show_value(false));
+                    });
+                    ui.end_row();
+                    ui.label(tr!("ui-env-editor-weather-seed"))
+                        .on_hover_text(tr!("ui-env-editor-weather-seed-tip"));
+                    ui.add(egui::DragValue::new(&mut w.seed).range(0..=1023));
+                    ui.end_row();
+                });
+        });
+        // the code as written in the name
+        if on {
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(tr!("ui-env-editor-weather-code")).size(11.5).color(p.muted));
+                ui.label(RichText::new(format!("~{}", w.code())).monospace().color(p.ink));
+            });
+        }
+        if (on, w) != before {
+            // the code takes 1 + 1 + CODE_LEN of the name's 63 characters:
+            // a longer name is cut to make room
+            let room = 63 - 2 - CODE_LEN;
+            let base: String = if on && base.chars().count() > room {
+                self.message = Some((tr!("ui-env-editor-weather-name-cut").into(), false));
+                base.chars().take(room).collect::<String>().trim_end().to_owned()
+            } else {
+                base
+            };
+            self.name = if on { w.name_with(&base) } else { base };
+            if let Some(doc) = &mut self.doc {
+                doc.set_name(&self.name);
+            }
+            self.dirty = true;
         }
     }
 

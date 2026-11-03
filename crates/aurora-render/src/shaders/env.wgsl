@@ -1747,11 +1747,11 @@ fn rain_sheltered(world: vec3<f32>) -> f32 {
     return 1.0 - open * 0.25;
 }
 
-// A drop blown by the wind comes in slanted: it is sheltered too where its
-// path, traced back up against the wind, passes under cover (a wall or a
-// roof upwind), so that a building leaves a dry zone on its lee side and no
-// drop comes out of a wall. Three points up the path of a drop of middling
-// speed (about 6.5 m/s, the slant of `carried` over `speed`).
+// A drop blown by the wind comes in slanted, so its cover is what its path
+// meets, traced back up against the wind, not only what is straight above
+// it: a building leaves a dry zone on its lee side (no drop comes out of a
+// wall), and the rain reaches a little way in under an overhang on the
+// windward side.
 // How far a drop drifts sideways for each metre it falls, in the wind now
 // (no more than about 70° from the vertical).
 fn rain_slant() -> vec2<f32> {
@@ -1780,15 +1780,30 @@ fn rain_reached_height(xy: vec2<f32>, near_z: f32) -> f32 {
 }
 
 fn rain_sheltered_slanted(world: vec3<f32>) -> f32 {
-    var covered = rain_sheltered(world);
+    let straight = rain_sheltered(world);
     let s = rain_slant();
-    if (dot(s, s) < 0.0025 || covered > 0.99) { return covered; }
-    let up = RAIN_PATH_UP;
+    if (dot(s, s) < 0.0025) { return straight; }
+    // walk up the path, three points (RAIN_PATH_UP) against the shelter
+    // map's topmost surface. It is blocked where it goes in under cover
+    // from the open (a wall's side, an overhang's underside), where it
+    // rises up through a surface (the next point is above it, but it was
+    // higher than the path's last point: the roof is in between), or where
+    // it is still under cover at the top. Starting under a roof and coming
+    // out under its edge (the surface there lower than the path was), it
+    // is not: the rain blows in under it.
+    var under = straight > 0.5;
+    var last_z = world.z;
     for (var i = 0; i < 3; i++) {
-        covered = max(covered, rain_sheltered(world + vec3<f32>(-s * up[i], up[i])));
-        if (covered > 0.99) { break; }
+        let dz = RAIN_PATH_UP[i];
+        let p = world + vec3<f32>(-s * dz, dz);
+        let top = rain_surface_height(p.xy, p.z);
+        let now = top > p.z + 0.05;
+        if (now && !under) { return 1.0; }
+        if (!now && under && top > last_z) { return 1.0; }
+        under = now;
+        last_z = p.z;
     }
-    return covered;
+    return select(0.0, 1.0, under);
 }
 
 // The light local lights give a drop: some all around it, much more when the

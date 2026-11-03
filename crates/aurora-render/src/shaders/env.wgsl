@@ -1925,6 +1925,82 @@ fn rain_depth_normal(uv: vec2<f32>, world: vec3<f32>) -> vec3<f32> {
     return n;
 }
 
+// The wetness memory (renderer.rs `RainWet`): for each cell of a square
+// around the camera (`frame.rain_wet`), the height above which surfaces are
+// wet (x: the topmost surface the rain reaches, which cover that stays
+// raises only slowly, so that an umbrella passing leaves the ground wet) and
+// how wet they are (y: rising while it rains, drying for minutes after).
+@group(0) @binding(26) var rain_wetness: texture_2d<f32>;
+
+// One frame of the memory: the last one, moved with its square, and the
+// shelter map's topmost surface now.
+@fragment
+fn fs_rain_wet_update(in: RainWetOut) -> @location(0) vec4<f32> {
+    let size = f32(textureDimensions(rain_wetness).x);
+    let extent = frame.rain_wet.z;
+    let xy = frame.rain_wet.xy + in.clip.xy / size * extent;
+    let step = frame.rain_wet_step;
+    let dt = max(step.z, 0.0);
+    var wet_h = 1e9;
+    var amount = 0.0;
+    var known = false;
+    if (step.z >= 0.0) {
+        let uv = (xy - step.xy) / extent;
+        if (all(uv >= vec2<f32>(0.0)) && all(uv < vec2<f32>(1.0))) {
+            let s = textureLoad(rain_wetness, vec2<i32>(uv * size), 0);
+            wet_h = s.x;
+            amount = s.y;
+            known = true;
+        }
+    }
+    let heavy = frame.rain.x;
+    if (heavy > 0.0) {
+        let top = rain_surface_height(xy, frame.camera_pos.z);
+        if (!known) {
+            // new here: as if it had rained on it all along
+            wet_h = select(-1e9, top, top > -1e8);
+            amount = step.w;
+        } else {
+            if (top > -1e8) {
+                if (top < wet_h) {
+                    // something lower opened to the sky: wet from now
+                    wet_h = top;
+                } else {
+                    // cover that stays: what is under it dries, slowly
+                    wet_h += (top - wet_h) * (1.0 - exp(-dt / 90.0));
+                }
+            }
+            amount += (1.0 - amount) * (1.0 - exp(-dt * (0.5 + heavy) / 8.0));
+        }
+    } else {
+        if (!known) {
+            wet_h = 1e9;
+            amount = 0.0;
+        }
+        amount *= exp(-dt / 120.0);
+    }
+    return vec4<f32>(wet_h, amount, 0.0, 1.0);
+}
+
+// How wet the surface at `world` is from the memory (0..1, blended between
+// cells); -1 outside it.
+fn rain_wet_memory(world: vec3<f32>) -> f32 {
+    let extent = frame.rain_wet.z;
+    if (extent <= 0.0) { return -1.0; }
+    let size = textureDimensions(rain_wetness).x;
+    let pos = (world.xy - frame.rain_wet.xy) / extent * f32(size) - 0.5;
+    if (any(pos < vec2<f32>(0.0)) || any(pos > vec2<f32>(f32(size - 1u)))) { return -1.0; }
+    let i = vec2<i32>(floor(pos));
+    let f = fract(pos);
+    var w = vec4<f32>(0.0);
+    let offs = array<vec2<i32>, 4>(vec2<i32>(0, 0), vec2<i32>(1, 0), vec2<i32>(0, 1), vec2<i32>(1, 1));
+    for (var k = 0; k < 4; k++) {
+        let s = textureLoad(rain_wetness, i + offs[k], 0);
+        w[k] = smoothstep(-0.3, -0.05, world.z - s.x) * s.y;
+    }
+    return mix(mix(w.x, w.y, f.x), mix(w.z, w.w, f.x), f.y);
+}
+
 // The terrain's heights around the camera (viewer scene/rain_ground.rs):
 // `frame.rain` yz its corner, w its size (0: none).
 @group(0) @binding(25) var rain_ground: texture_2d<f32>;
@@ -2028,8 +2104,12 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
     // per triangle facings (no G-buffer): only smooth, near-level ground,
     // judged over the area, not the triangle
     let up = select(smoothstep(0.5, 0.85, n.z), smoothstep(0.95, 0.985, area.z) * select(0.0, 1.0, smooth_area), level_only);
-    let open = 1.0 - rain_sheltered(world + n * 0.08);
-    let heavy = frame.rain.x;
+    // how wet: the memory (wet for a while after the rain, and under cover
+    // that only passed), else the shelter now
+    var open = rain_wet_memory(world + n * 0.05);
+    if (open < 0.0) { open = (1.0 - rain_sheltered(world + n * 0.08)) * step(1e-4, frame.rain.x); }
+    let raining = frame.rain.x;
+    let heavy = max(frame.rain.x, frame.rain_wet.w);
     let reach = up * open * (1.0 - smoothstep(28.0, 38.0, dist));
     if (reach < 0.01 || heavy <= 0.0) { return vec4<f32>(0.0); }
 
@@ -2054,6 +2134,7 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
         let pool_level = mix(0.78, 0.53, sqrt(heavy));
         let flat_ground = 1.0 - smoothstep(0.12, 0.25, ts.y);
         puddle = smoothstep(pool_level, pool_level + 0.05, shape + clamp(ts.x * 5.0, -0.3, 0.3)) * flat_ground;
+        puddle *= smoothstep(0.55, 0.95, open);
     } else {
         // on a build (a floor, a road, a roof): the screen's rules
         let pool_level = mix(0.78, 0.53, sqrt(heavy));
@@ -2061,6 +2142,7 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
         let flat_area = smoothstep(0.95, 0.98, area.z) * select(0.0, 1.0, smooth_area) * (1.0 - smoothstep(0.0, 0.02, area.w))
             * smoothstep(0.985, 0.996, build_level);
         puddle = smoothstep(pool_level, pool_level + 0.05, shape + dip) * flat_area;
+        puddle *= smoothstep(0.55, 0.95, open);
     }
 
     // damp: how wet each spot is. The cracks hold water first (pixels
@@ -2099,7 +2181,7 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
     if (puddle > 0.01) {
         let along = max(abs(dot(view, vec3<f32>(0.0, 0.0, 1.0))), 0.05);
         let footprint = dist * 1.15 * frame.screen.w / along;
-        let ripple = rain_ripples(world.xy, frame.camera_pos.w) * puddle * sqrt(heavy) * rain_ring_detail(footprint);
+        let ripple = rain_ripples(world.xy, frame.camera_pos.w) * puddle * sqrt(raining) * rain_ring_detail(footprint);
         let np = normalize(vec3<f32>(ripple * 0.06, 1.0));
         let r = reflect(-view, np);
         let fresnel = 0.02037 + 0.97963 * pow(1.0 - max(dot(np, view), 0.0), 5.0);

@@ -33,7 +33,7 @@ use crate::ui_frame::EguiFrame;
 use crate::upload::FrameUploads;
 use crate::writes::QueueSink;
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, Vec3, Vec4};
+use glam::{Mat4, Vec2, Vec3, Vec4};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -161,6 +161,14 @@ struct FrameU {
     motion_reproj: [[f32; 4]; 4],
     /// Rain prototype: x how hard it rains (0..1).
     rain: [f32; 4],
+    /// Rain prototype's wetness memory: its corner (xy) and size (z, 0:
+    /// none), w how hard it rained while it was wetted (the wet ground's
+    /// strength once it stopped).
+    rain_wet: [f32; 4],
+    /// The memory's last corner (xy), the time since its last update (z,
+    /// s; < 0: no history), w how soaked a place new to it is (the rain's
+    /// time so far, then drying).
+    rain_wet_step: [f32; 4],
 }
 
 /// Must match `ShadowParams` in object.wgsl.
@@ -900,6 +908,8 @@ struct Pipelines {
     rain_splash: wgpu::RenderPipeline,
     /// Rain prototype's distant rain (`fs_rain_far`).
     rain_far: wgpu::RenderPipeline,
+    /// Rain prototype's wetness memory update (`fs_rain_wet_update`).
+    rain_wet_update: wgpu::RenderPipeline,
     /// Rain prototype's wet ground and puddles (`fs_rain_wet`).
     rain_wet: wgpu::RenderPipeline,
     /// The same with the screen-space reflections' G-buffer (`fs_rain_wet_g`).
@@ -1669,6 +1679,8 @@ pub(crate) struct Backend {
     msaa_samples: u32,
     /// The pipelines being compiled for other samples or SSR, if any.
     pipeline_build: Option<PipelineBuild>,
+    /// Rain prototype's wetness memory bookkeeping.
+    rain_wet: RainWet,
     vsync: bool,
     /// Presentation modes of the surface, read when it was created.
     present_modes: Vec<wgpu::PresentMode>,
@@ -1984,6 +1996,63 @@ fn begin_scene_b_on<'a>(
         occlusion_query_set: None,
         multiview_mask: None,
     })
+}
+
+/// Rain prototype: the wetness memory's bookkeeping. The memory covers
+/// [`RAIN_WET_EXTENT`] m around the camera, its corner snapped to
+/// [`RAIN_WET_SNAP`] m (it moves only after the camera has; the update reads
+/// the last one at the same places). `soak`: how wet a place new to it is
+/// (it rises as the rain goes on, then dries); the ground is drawn wet
+/// while that is above [`RAIN_WET_DRY`].
+#[derive(Default)]
+struct RainWet {
+    origin: Option<Vec2>,
+    last: Option<Instant>,
+    level: f32,
+    soak: f32,
+    uniform: [f32; 4],
+    step: [f32; 4],
+}
+
+const RAIN_WET_EXTENT: f32 = 128.0;
+const RAIN_WET_SNAP: f32 = 8.0;
+const RAIN_WET_DRY: f32 = 0.02;
+/// How fast a place soaks while it rains (s, at full rain), and dries
+/// after (s).
+const RAIN_SOAK_SECS: f32 = 8.0;
+const RAIN_DRY_SECS: f32 = 120.0;
+
+impl RainWet {
+    fn active(&self) -> bool {
+        self.soak > RAIN_WET_DRY || self.level > 0.0 && self.last.is_some() && self.soak > 0.0
+    }
+
+    /// One frame of a rain of `rain` with the camera at `at`.
+    fn advance(&mut self, rain: f32, at: Vec2) {
+        let now = Instant::now();
+        let dt = self.last.map_or(0.0, |t| now.duration_since(t).as_secs_f32().min(1.0));
+        let rain = rain.clamp(0.0, 1.0);
+        if rain > 0.0 {
+            self.level = rain;
+            self.soak += (1.0 - self.soak) * (1.0 - (-dt * (0.5 + rain) / RAIN_SOAK_SECS).exp());
+            self.soak = self.soak.max(1e-3);
+        } else {
+            self.soak *= (-dt / RAIN_DRY_SECS).exp();
+        }
+        let was = self.origin;
+        let active = rain > 0.0 || self.soak > RAIN_WET_DRY;
+        if !active {
+            *self = RainWet::default();
+            return;
+        }
+        let origin = (at / RAIN_WET_SNAP).floor() * RAIN_WET_SNAP - Vec2::splat(RAIN_WET_EXTENT * 0.5);
+        self.origin = Some(origin);
+        let fresh = was.is_none() || self.last.is_none();
+        let prev = was.unwrap_or(origin);
+        self.uniform = [origin.x, origin.y, RAIN_WET_EXTENT, self.level];
+        self.step = [prev.x, prev.y, if fresh { -1.0 } else { dt }, self.soak];
+        self.last = Some(now);
+    }
 }
 
 /// Rain prototype: the drops drawn for a rain of `rain` (0..1); 1, a
@@ -2737,6 +2806,17 @@ impl Backend {
         let frame_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("frame"),
             entries: &[
+                // rain prototype: the wetness memory
+                wgpu::BindGroupLayoutEntry {
+                    binding: 26,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
                 // rain prototype: the terrain's heights around the camera
                 wgpu::BindGroupLayoutEntry {
                     binding: 25,
@@ -3270,6 +3350,7 @@ impl Backend {
             finishers: Helpers::new(2, "aurora-render-finish", finish_encoder),
             msaa_samples,
             pipeline_build: None,
+            rain_wet: RainWet::default(),
             vsync,
             present_modes,
             settings,
@@ -3661,6 +3742,18 @@ impl Backend {
             depth_write: false,
             depth_compare: wgpu::CompareFunction::Greater,
             ..base("rain splashes", "vs_rain_splash", "fs_rain_splash")
+        });
+        let rain_wet_update = pipe(PipeDesc {
+            vb: Vb::None,
+            cull: None,
+            blend: None,
+            write_mask: wgpu::ColorWrites::ALL,
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::Always,
+            samples: 1,
+            format: Some(wgpu::TextureFormat::Rg32Float),
+            depth_format: None,
+            ..base("rain wetness", "vs_rain_wet", "fs_rain_wet_update")
         });
         let rain_far = pipe(PipeDesc {
             vb: Vb::None,
@@ -4192,6 +4285,7 @@ impl Backend {
             rain_wet_g,
             rain_splash,
             rain_far,
+            rain_wet_update,
             glow,
             glow_water,
             glow_max,
@@ -4494,6 +4588,10 @@ impl Backend {
                     wgpu::BindGroupEntry {
                         binding: 25,
                         resource: wgpu::BindingResource::TextureView(&water_effects.rain_ground_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 26,
+                        resource: wgpu::BindingResource::TextureView(&water_effects.rain_wet_view),
                     },
                     wgpu::BindGroupEntry {
                         binding: 0,
@@ -5340,6 +5438,8 @@ impl Backend {
         let mut u = FrameU::zeroed();
         let area = self.water_effects.rain_area;
         u.rain = [f.rain.clamp(0.0, 1.0), area[0], area[1], area[2]];
+        u.rain_wet = self.rain_wet.uniform;
+        u.rain_wet_step = self.rain_wet.step;
         u.selection_color = f.selection_color;
         u.rez_gradient = f.rez_gradient;
         u.view_proj = vp.to_cols_array_2d();
@@ -6014,6 +6114,7 @@ impl Backend {
         // rain prototype: the terrain heights (and where they are, for the
         // uniforms below)
         self.water_effects.upload_rain_ground(&self.queue, &lists.rain_ground);
+        self.rain_wet.advance(f.rain, f.camera_pos.truncate());
         let mut main = self.frame_uniforms(fu, fu.view, Some(fu.camera_pos), &cascades, &splits);
         main.cam_up[3] = camera_water_level;
         {
@@ -7746,6 +7847,42 @@ impl Backend {
         }
         let water_particles = if f.cutout { 0 } else { self.water_effects.particles };
         let rain_drops = if f.cutout { 0 } else { rain_drops(f.rain) };
+        // rain prototype: the wetness memory, from the last one and the
+        // shelter map, then copied where it is read
+        let rain_wet = !f.cutout && self.rain_wet.active();
+        if rain_wet {
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("rain wetness"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &self.water_effects.rain_wet_target_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                bind_mesh(&mut pass, &self.groups.a);
+                pass.set_pipeline(&self.pipelines.rain_wet_update);
+                pass.draw(0..3, 0..1);
+            }
+            let size = wgpu::Extent3d {
+                width: crate::water_effects::RAIN_WET_SIZE,
+                height: crate::water_effects::RAIN_WET_SIZE,
+                depth_or_array_layers: 1,
+            };
+            encoder.copy_texture_to_texture(
+                self.water_effects.rain_wet_target.as_image_copy(),
+                self.water_effects.rain_wet.as_image_copy(),
+                size,
+            );
+        }
         if water_particles > 0 && above_water_possible {
             let mut pass = begin_scene_b(&mut encoder, &self.targets, "submerged water particles", false, false);
             bind_mesh(&mut pass, &self.groups.a);
@@ -7969,7 +8106,7 @@ impl Backend {
             // rain prototype: wet ground and puddles, under the transparent
             // things drawn after
             pass_mark(&mut pass, MARK_WET_BEGIN);
-            if rain_drops > 0 {
+            if rain_wet {
                 match (&self.pipelines.rain_wet_g, &self.gbuf_group) {
                     (Some(pipe), Some(gbg)) => {
                         pass.set_pipeline(pipe);

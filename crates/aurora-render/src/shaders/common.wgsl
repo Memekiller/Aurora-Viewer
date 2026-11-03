@@ -113,6 +113,8 @@ struct Frame {
     motion_prev_vp: mat4x4<f32>,
     motion_reproj: mat4x4<f32>,
     rain: vec4<f32>,            // rain prototype: x how hard it rains (0..1)
+    rain_wet: vec4<f32>,        // wetness memory: corner xy, size z (0: none), w the rain that wetted
+    rain_wet_step: vec4<f32>,   // last corner xy, z time since (s, < 0: none), w soak of a new place
 };
 
 // frame.features.x: "HDR and Emissive" off, the Legacy Viewer's G-buffer has

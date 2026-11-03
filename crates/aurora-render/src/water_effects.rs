@@ -149,6 +149,8 @@ pub struct RainGround {
 }
 
 pub const RAIN_GROUND_SIZE: u32 = 128;
+/// Rain prototype: cells a side of the wetness memory (`fs_rain_wet_update`).
+pub const RAIN_WET_SIZE: u32 = 512;
 
 #[derive(Debug, Clone, Default)]
 pub struct WaterGround {
@@ -243,6 +245,13 @@ pub(crate) struct WaterGpu {
     rain_ground_snapshot: Option<std::sync::Arc<[f32]>>,
     /// Where the uploaded rain ground is: origin x, y, extent (0: none).
     pub rain_area: [f32; 3],
+    /// Rain prototype: the wetness memory, drawn into `rain_wet_target`
+    /// each frame and copied into `rain_wet` (frame group binding 26),
+    /// which the next update and the wet ground read.
+    pub rain_wet_target: wgpu::Texture,
+    pub rain_wet_target_view: wgpu::TextureView,
+    pub rain_wet: wgpu::Texture,
+    pub rain_wet_view: wgpu::TextureView,
     ground_snapshot: Option<std::sync::Arc<[[f32; 2]]>>,
     group: wgpu::BindGroup,
     pipeline: wgpu::ComputePipeline,
@@ -374,6 +383,29 @@ impl WaterGpu {
             view_formats: &[],
         });
         let rain_ground_view = rain_ground.create_view(&Default::default());
+        let wet = |label, usage| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width: RAIN_WET_SIZE,
+                    height: RAIN_WET_SIZE,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rg32Float,
+                usage,
+                view_formats: &[],
+            })
+        };
+        let rain_wet_target = wet(
+            "rain wetness (drawn)",
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        );
+        let rain_wet_target_view = rain_wet_target.create_view(&Default::default());
+        let rain_wet = wet("rain wetness", wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST);
+        let rain_wet_view = rain_wet.create_view(&Default::default());
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("water simulation"),
             layout: &pipeline.get_bind_group_layout(0),
@@ -487,6 +519,10 @@ impl WaterGpu {
             rain_ground_view,
             rain_ground_snapshot: None,
             rain_area: [0.0; 3],
+            rain_wet_target,
+            rain_wet_target_view,
+            rain_wet,
+            rain_wet_view,
             ground_snapshot: None,
             group,
             pipeline,

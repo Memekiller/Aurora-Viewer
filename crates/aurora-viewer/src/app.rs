@@ -518,6 +518,8 @@ pub struct App {
     /// Rain prototype: the rain's sound (scene/rain_sound.rs).
     rain_sound: crate::scene::rain_sound::RainSound,
     rain_sound_dt: Instant,
+    /// Rain prototype: when it last rained (the ground dries for a while).
+    rain_last: Option<Instant>,
     /// Movement keys held since, and the server position then (stuck agent).
     stuck_watch: Option<(Instant, Vec3)>,
     stuck_logged: Option<Instant>,
@@ -1332,6 +1334,7 @@ impl App {
             wind_sound: Default::default(),
             rain_sound: Default::default(),
             rain_sound_dt: Instant::now(),
+            rain_last: None,
             stuck_watch: None,
             stuck_logged: None,
             attachments_logged: 0,
@@ -10312,7 +10315,13 @@ impl App {
         // capture is waited for, its pixels are read in the tail below.
         // (nothing of the scene while the 3D drawing is paused behind,
         // texture_budget::Background)
-        let raining = self.env_ui.rain() > 0.0;
+        // rain prototype: while it rains, and while the ground dries after
+        // (the renderer's wetness memory: about 8 minutes), the terrain
+        // heights and the G-buffer stay
+        if self.env_ui.rain() > 0.0 {
+            self.rain_last = Some(Instant::now());
+        }
+        let raining = self.rain_last.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(480));
         self.scene.update_rain_ground(&self.world, fp.camera_pos, raining);
         let lists = if self.in_world() && !self.scene.textures.drawing_paused() {
             &self.scene.lists

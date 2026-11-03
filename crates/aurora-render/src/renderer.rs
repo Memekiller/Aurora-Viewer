@@ -896,6 +896,8 @@ struct Pipelines {
     water_particles_under: wgpu::RenderPipeline,
     /// Rain prototype (`vs_rain` in env.wgsl, `AURORA_RAIN`).
     rain: wgpu::RenderPipeline,
+    /// Rain prototype's splashes (`vs_rain_splash`).
+    rain_splash: wgpu::RenderPipeline,
     /// Rain prototype's wet ground and puddles (`fs_rain_wet`).
     rain_wet: wgpu::RenderPipeline,
     /// The same with the screen-space reflections' G-buffer (`fs_rain_wet_g`).
@@ -2736,7 +2738,9 @@ impl Backend {
                 uniform_entry(0, wgpu::ShaderStages::VERTEX_FRAGMENT),
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    // the vertex stage too: the rain prototype's splashes
+                    // read where they land in the shelter map
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Depth,
                         view_dimension: wgpu::TextureViewDimension::D2,
@@ -3629,6 +3633,15 @@ impl Backend {
             constants: rain_constants(),
             ..base("rain", "vs_rain", "fs_rain")
         });
+        let rain_splash = pipe(PipeDesc {
+            vb: Vb::None,
+            cull: None,
+            blend: Some(suppress),
+            write_mask: wgpu::ColorWrites::ALL,
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::Greater,
+            ..base("rain splashes", "vs_rain_splash", "fs_rain_splash")
+        });
         let rain_wet = pipe(PipeDesc {
             vb: Vb::None,
             cull: None,
@@ -4148,6 +4161,7 @@ impl Backend {
             rain,
             rain_wet,
             rain_wet_g,
+            rain_splash,
             glow,
             glow_water,
             glow_max,
@@ -7884,6 +7898,9 @@ impl Backend {
             if rain_drops > 0 {
                 pass.set_pipeline(&self.pipelines.rain);
                 pass.draw(0..6, 0..rain_drops);
+                // splashes: 6 droplets of 6 vertices; up to 9,000 places
+                pass.set_pipeline(&self.pipelines.rain_splash);
+                pass.draw(0..36, 0..(f.rain.clamp(0.0, 1.0) * 9_000.0) as u32);
             }
             pass_mark(pass, MARK_RAIN_END);
             // particles last: they rebind vertex buffer 0

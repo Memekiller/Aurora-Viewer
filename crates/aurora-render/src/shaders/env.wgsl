@@ -1762,6 +1762,13 @@ fn rain_lamps(world: vec3<f32>, frag: vec2<f32>, view: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_rain(in: RainOut) -> @location(0) vec4<f32> {
+    return rain_streak(in, 0.25);
+}
+
+// A drop seen as a streak of water: bends the scene behind, reflects the
+// sky, catches the sun and the lamps. `soft`: how far (m) it fades into what
+// is behind it.
+fn rain_streak(in: RainOut, soft: f32) -> vec4<f32> {
     if (in.life <= 0.001) { discard; }
     // no rain under the water, nor seen from under it
     if (in.world.z < frame.params.y || camera_underwater()) { discard; }
@@ -1794,12 +1801,20 @@ fn fs_rain(in: RainOut) -> @location(0) vec4<f32> {
     alpha *= 1.0 - rain_sheltered(in.world);
     // soft where a drop meets the ground or a wall behind it
     let depth = scene_depth_at(suv);
+    var over_water = false;
     if (depth > 0.0) {
         let behind = world_from_depth(suv, depth);
         let cam = frame.camera_pos.xyz;
-        alpha *= clamp((distance(behind, cam) - distance(in.world, cam)) / 0.25, 0.0, 1.0);
+        alpha *= clamp((distance(behind, cam) - distance(in.world, cam)) / soft, 0.0, 1.0);
+        over_water = behind.z < frame.params.y - 0.02;
     }
     if (alpha < 0.003) { discard; }
+    if (over_water) {
+        // the scene copy holds what is under the water there (the water is
+        // drawn after it): no bending, only the light the drop adds
+        let lit_only = mix(vec3<f32>(0.0), reflected, fresnel) + (glint + ambient) * (0.35 + fresnel) + lamps * (0.3 + fresnel * 0.5);
+        return vec4<f32>(apply_fog(lit_only, in.world) * alpha, 0.0);
+    }
     return vec4<f32>(apply_fog(color, in.world) * alpha, alpha);
 }
 
@@ -1902,6 +1917,27 @@ fn rain_depth_normal(uv: vec2<f32>, world: vec3<f32>) -> vec3<f32> {
     return n;
 }
 
+// The ground's shape over about 30 cm around a point, from the depth: its
+// facing across several triangles (xyz), how much higher the point is than
+// around it (w: > 0 on a bump, < 0 in a dip); none (w 1e3) where the four
+// points around are not on one smooth surface (an edge, holes in foliage).
+fn rain_area_shape(uv: vec2<f32>, world: vec3<f32>) -> vec4<f32> {
+    let cam = frame.camera_pos.xyz;
+    let dist = max(distance(world, cam), 0.5);
+    let r = clamp(0.3 * frame.screen.y / (1.15 * dist), 2.0, 40.0);
+    let o = r * frame.screen.zw;
+    let pr = world_from_depth(uv + vec2<f32>(o.x, 0.0), scene_depth_at(uv + vec2<f32>(o.x, 0.0)));
+    let pl = world_from_depth(uv - vec2<f32>(o.x, 0.0), scene_depth_at(uv - vec2<f32>(o.x, 0.0)));
+    let pd = world_from_depth(uv + vec2<f32>(0.0, o.y), scene_depth_at(uv + vec2<f32>(0.0, o.y)));
+    let pu = world_from_depth(uv - vec2<f32>(0.0, o.y), scene_depth_at(uv - vec2<f32>(0.0, o.y)));
+    // on one smooth surface, each pair's middle is close to the point
+    let off = length((pr + pl) * 0.5 - world) + length((pd + pu) * 0.5 - world);
+    if (off > 0.05 + 0.01 * dist) { return vec4<f32>(0.0, 0.0, 1.0, 1e3); }
+    var n = normalize(cross(pr - pl, pd - pu));
+    if (dot(n, cam - world) < 0.0) { n = -n; }
+    return vec4<f32>(n, world.z - (pr.z + pl.z + pd.z + pu.z) * 0.25);
+}
+
 // A surface in the rain. `n`: its smooth facing; `porosity` 0 (glass,
 // metal, polished stone: water stays on top, a mirror-like film) to 1
 // (grass, soil, cloth: water soaks in, darker and barely shinier), after
@@ -1910,7 +1946,11 @@ fn rain_depth_normal(uv: vec2<f32>, world: vec3<f32>) -> vec3<f32> {
 fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f32>, porosity: f32, level_only: bool) -> vec4<f32> {
     let cam = frame.camera_pos.xyz;
     let dist = distance(world, cam);
-    let up = select(smoothstep(0.5, 0.85, n.z), smoothstep(0.95, 0.985, n.z), level_only);
+    let area = rain_area_shape(uv, world);
+    let smooth_area = area.w < 100.0;
+    // per triangle facings (no G-buffer): only smooth, near-level ground,
+    // judged over the area, not the triangle
+    let up = select(smoothstep(0.5, 0.85, n.z), smoothstep(0.95, 0.985, area.z) * select(0.0, 1.0, smooth_area), level_only);
     let open = 1.0 - rain_sheltered(world + n * 0.08);
     let heavy = frame.rain.x;
     let reach = up * open * (1.0 - smoothstep(28.0, 38.0, dist));
@@ -1925,8 +1965,12 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
     // degrees of level, its surface level whatever the ground below is
     // shaped like, broken only by the ripples
     let shape = water_fx_noise(world.xy * 0.16) * 0.7 + water_fx_noise(world.xy * 0.55) * 0.3;
+    // judged over the area: the blobs' shapes, not the triangles', make the
+    // edges; water runs off bumps (a rock's top) and gathers in dips
     let pool_level = mix(0.78, 0.53, sqrt(heavy));
-    let puddle = smoothstep(pool_level, pool_level + 0.05, shape) * smoothstep(0.985, 0.995, n.z);
+    let dip = clamp(-area.w * 4.0, 0.0, 0.15);
+    let flat_area = smoothstep(0.95, 0.98, area.z) * select(0.0, 1.0, smooth_area) * (1.0 - smoothstep(0.0, 0.02, area.w));
+    let puddle = smoothstep(pool_level, pool_level + 0.05, shape + dip) * flat_area;
 
     // damp: how wet each spot is. The cracks hold water first (pixels
     // darker than their surroundings: the gaps between cobbles, the grain
@@ -2037,4 +2081,111 @@ fn rain_water_rings(world: vec3<f32>) -> vec2<f32> {
     if (reach <= 0.0) { return vec2<f32>(0.0); }
     let open = 1.0 - rain_sheltered(world + vec3<f32>(0.0, 0.0, 0.1));
     return rain_ripples(world.xy, frame.camera_pos.w) * (0.35 * sqrt(heavy) * reach * open);
+}
+
+
+// ------------------------------------------------------ splashes (prototype)
+// Each instance is a place where drops keep landing, one at a time: every
+// period it lands at a new random spot of a square around the camera
+// (fixed in the world, like the drops' box) and throws a few droplets up and
+// out, which fall back under gravity within a quarter of a second. Where it
+// lands is the top of whatever is there, read from the shelter map (a roof,
+// an awning, a table, the ground), or the water if that is higher.
+
+const SPLASH_AREA: f32 = 36.0;
+const SPLASH_DROPLETS: u32 = 6u;
+const SPLASH_LIFE: f32 = 0.28;
+
+fn rain_splash_none() -> RainOut {
+    var out: RainOut;
+    out.clip = vec4<f32>(2.0, 2.0, 0.5, 1.0);
+    out.world = vec3<f32>(0.0);
+    out.uv = vec2<f32>(0.0);
+    out.side = vec3<f32>(1.0, 0.0, 0.0);
+    out.life = 0.0;
+    return out;
+}
+
+// Height (m) of the topmost surface at `xy` in the shelter map; none when
+// the map is not there or sees nothing below.
+fn rain_surface_height(xy: vec2<f32>, near_z: f32) -> f32 {
+    if (frame.spot_lights.y != -1) { return -1e9; }
+    let m = frame.spot_vp[1];
+    let lp = m * vec4<f32>(xy, near_z, 1.0);
+    if (lp.w < 0.5) { return -1e9; }
+    let ndc = lp.xyz / lp.w;
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) { return -1e9; }
+    let dims = vec2<f32>(textureDimensions(shadow_map));
+    let at = clamp(vec2<i32>((vec2<f32>(0.75, 0.5) + uv * 0.25) * dims), vec2<i32>(0), vec2<i32>(dims) - vec2<i32>(1));
+    let d = textureLoad(shadow_map, at, 0);
+    if (d >= 0.999) { return -1e9; }
+    // the map's depth is m[2].z * z + m[3].z (seen straight down)
+    return (d - m[3].z) / m[2].z;
+}
+
+@vertex
+fn vs_rain_splash(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32) -> RainOut {
+    let heavy = frame.rain.x;
+    let seed0 = rain_hash(instance * 7u + 1000003u);
+    let period = 0.6 + rain_rand(seed0) * 0.6;
+    let phase = frame.camera_pos.w / period + rain_rand(seed0 + 1u);
+    let age = fract(phase) * period;
+    if (age > SPLASH_LIFE) { return rain_splash_none(); }
+    let seed = rain_hash(seed0 ^ (u32(floor(phase)) * 2654435761u));
+
+    // where it lands this time: fixed in the world, wrapped around the camera
+    let cam = frame.camera_pos.xyz;
+    let base = vec2<f32>(rain_rand(seed), rain_rand(seed + 1u)) * SPLASH_AREA;
+    let corner = cam.xy - vec2<f32>(SPLASH_AREA * 0.5);
+    let xy = corner + (base - corner - floor((base - corner) / SPLASH_AREA) * SPLASH_AREA);
+    let ground = max(rain_surface_height(xy, cam.z), frame.params.y);
+    if (ground < -1e8 || abs(ground - cam.z) > 40.0) { return rain_splash_none(); }
+
+    // one droplet: thrown up and out (harder in heavier rain, its drops are
+    // bigger), then falling back
+    let j = vertex / 6u;
+    let ds = seed + 10u + j * 5u;
+    let angle = rain_rand(ds) * 6.2831853;
+    let force = 0.6 + 0.6 * heavy;
+    let outward = (0.35 + rain_rand(ds + 1u) * 0.75) * force;
+    let upward = (0.7 + rain_rand(ds + 2u) * 1.1) * force;
+    let v0 = vec3<f32>(cos(angle) * outward, sin(angle) * outward, upward);
+    let pos = vec3<f32>(xy, ground + 0.01) + v0 * age + vec3<f32>(0.0, 0.0, -4.9 * age * age);
+    if (pos.z < ground) { return rain_splash_none(); }
+    let velocity = v0 + vec3<f32>(0.0, 0.0, -9.8 * age);
+    let to_cam = cam - pos;
+    let dist = length(to_cam);
+    if (dist > 20.0) { return rain_splash_none(); }
+
+    // a streak, like a drop's, a little shorter
+    let speed = max(length(velocity), 0.05);
+    let axis = velocity / speed;
+    let side = normalize(cross(axis, to_cam / max(dist, 0.001)) + vec3<f32>(1e-5, 0.0, 0.0));
+    let clip0 = frame.view_proj * vec4<f32>(pos, 1.0);
+    let clip1 = frame.view_proj * vec4<f32>(pos + side, 1.0);
+    let px_per_m = length((clip1.xy / max(clip1.w, 1e-3) - clip0.xy / max(clip0.w, 1e-3)) * frame.screen.xy * 0.5);
+    let real = (0.6 + rain_rand(ds + 3u) * 0.6) * 0.001;
+    let width = max(real, RAIN_MIN_PX / max(px_per_m, 1e-3)) * 0.5;
+    let coverage = clamp(real / (width * 2.0), 0.0, 1.0);
+    let length_m = max(speed * RAIN_EXPOSURE * 0.6, 0.004);
+    let corners = array<vec2<f32>, 6>(
+        vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0),
+        vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(-1.0, 1.0));
+    let c = corners[vertex % 6u];
+    let world = pos + side * c.x * width + axis * c.y * length_m * 0.5;
+
+    var out: RainOut;
+    out.clip = frame.view_proj * vec4<f32>(world, 1.0);
+    out.world = world;
+    out.uv = c;
+    out.side = side;
+    out.life = (1.0 - age / SPLASH_LIFE) * (1.0 - smoothstep(10.0, 20.0, dist)) * smoothstep(0.3, 1.0, dist)
+        * pow(coverage, 0.6) * 1.6;
+    return out;
+}
+
+@fragment
+fn fs_rain_splash(in: RainOut) -> @location(0) vec4<f32> {
+    return rain_streak(in, 0.03);
 }

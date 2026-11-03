@@ -1941,10 +1941,24 @@ fn rain_area_shape(uv: vec2<f32>, world: vec3<f32>) -> vec4<f32> {
     var pl = world_from_depth(uv - vec2<f32>(o.x, 0.0), scene_depth_at(uv - vec2<f32>(o.x, 0.0)));
     var pd = world_from_depth(uv + vec2<f32>(0.0, o.y), scene_depth_at(uv + vec2<f32>(0.0, o.y)));
     var pu = world_from_depth(uv - vec2<f32>(0.0, o.y), scene_depth_at(uv - vec2<f32>(0.0, o.y)));
-    let br = rain_off_ground(world, pr);
-    let bl = rain_off_ground(world, pl);
-    let bd = rain_off_ground(world, pd);
-    let bu = rain_off_ground(world, pu);
+    var br = rain_off_ground(world, pr);
+    var bl = rain_off_ground(world, pl);
+    var bd = rain_off_ground(world, pd);
+    var bu = rain_off_ground(world, pu);
+    // a lopsided pair: the side much higher or lower than the other is on
+    // something else (a plank's or a stone's edge, a low box)
+    let zr = abs(pr.z - world.z);
+    let zl = abs(pl.z - world.z);
+    let zd = abs(pd.z - world.z);
+    let zu = abs(pu.z - world.z);
+    if (!br && !bl) {
+        br = zr > zl * 2.0 + 0.02;
+        bl = zl > zr * 2.0 + 0.02;
+    }
+    if (!bd && !bu) {
+        bd = zd > zu * 2.0 + 0.02;
+        bu = zu > zd * 2.0 + 0.02;
+    }
     if ((br && bl) || (bd && bu)) { return vec4<f32>(0.0, 0.0, 1.0, 1e3); }
     if (br) { pr = world * 2.0 - pl; }
     if (bl) { pl = world * 2.0 - pr; }
@@ -1956,10 +1970,11 @@ fn rain_area_shape(uv: vec2<f32>, world: vec3<f32>) -> vec4<f32> {
 }
 
 // A point around is not on the same ground: rising or dropping more than
-// about 27 degrees from the point (ground that water pools on is far
-// flatter).
+// about 14 degrees (and 2 cm) from the point; ground that water pools on is
+// flatter, so a point on something standing on it (in front of it too: a
+// mushroom's cap a metre nearer the camera) is left out.
 fn rain_off_ground(world: vec3<f32>, p: vec3<f32>) -> bool {
-    return abs(p.z - world.z) > 0.5 * length(p.xy - world.xy) + 0.01;
+    return abs(p.z - world.z) > 0.25 * length(p.xy - world.xy) + 0.02;
 }
 
 // A surface in the rain. `n`: its smooth facing; `porosity` 0 (glass,
@@ -2020,7 +2035,7 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
     // haze. The film evens out the surface's small bumps: its facing is
     // halfway to level, so the bevels of normal maps do not each catch a
     // highlight (bright outlines around every stone and leaf).
-    let film = soaked * mix(0.6, 0.15, porosity);
+    let film = soaked * mix(0.35, 0.1, porosity);
     let nf = normalize(mix(n, vec3<f32>(0.0, 0.0, 1.0), 0.5));
     let rd = reflect(-view, nf);
     let fresnel_d = 0.02037 + 0.97963 * pow(1.0 - max(dot(nf, view), 0.0), 5.0);

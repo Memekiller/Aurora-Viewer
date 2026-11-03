@@ -2552,6 +2552,14 @@ fn rain_far_streaks(anchor: vec2<f32>, d: vec3<f32>, scene: f32, pixel: f32, hea
     let a = dot(d.xy, d.xy);
     let b = dot(o, d.xy);
     var far = array<f32, 4>(22.0, 40.0, 75.0, 140.0);
+    // the wind across the view slants the streaks: one slant for the whole
+    // frame (taken across the camera's heading), as a slant read at each
+    // pixel's own place on the cylinder changes along a streak and bends it
+    // into an arc; and no flatter than about 60° from the vertical, where a
+    // streak would wind round the cylinder (a drop falling `speed` blown
+    // sideways at `blown` keeps x + z * blown / speed)
+    let across_view = normalize(frame.cam_right.xy + vec2<f32>(1e-6, 0.0));
+    let slant = clamp(-dot(frame.rain_wind.zw, across_view) / speed, -1.7, 1.7);
     var lift = 0.0;
     for (var k = 0; k < 4; k++) {
         let radius = far[k];
@@ -2571,10 +2579,7 @@ fn rain_far_streaks(anchor: vec2<f32>, d: vec3<f32>, scene: f32, pixel: f32, hea
         let column = w * 7.0;
         let streak_len = 0.9 * pow(radius / 22.0, 0.7);
         for (var s = 0; s < 2; s++) {
-            // slanted by the wind across the view (a drop falling `speed`
-            // blown sideways at `blown` keeps x + z * blown / speed)
-            let blown = dot(frame.rain_wind.zw, vec2<f32>(-sin(theta), cos(theta)));
-            let u = theta * radius + f32(s) * column * 0.37 + p.z * blown / speed;
+            let u = theta * radius + f32(s) * column * 0.37 + p.z * slant;
             let col = floor(u / column);
             let seed = bitcast<u32>(i32(col)) * 747796405u + u32(k * 2 + s) * 2891336453u + 17u;
             if (rain_rand(seed + 3u) > heavy * 0.8 + 0.1) { continue; }

@@ -3614,8 +3614,33 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_ENV_KEYS=u\|y\|n\|x\|j` | World › Environment shortcut pressed (Ctrl+Shift + the letter) |
 | `AURORA_DEMO_DOF=<f>:<m>[:debug]` | Depth of field at this aperture and focus distance |
 | `AURORA_DEMO_AA_SWITCH=<frame>:<mode>[,…]` | Anti-aliasing changed at these frames, as Preferences would |
+| `AURORA_RAIN=<0..1>` | Rain of this strength until the Weather section is used |
+| `AURORA_RAIN_SPEED=<scale>` | Raindrops' speed relative to their real fall speed (prototype tuning) |
+| `AURORA_RAIN_DEBUG=1` | Rain's wetness memory drawn in colours over the ground |
+| `AURORA_RAIN_PARTICLES=<0..1>` | The first rain prototype, on particles (to be removed) |
+| `AURORA_THUNDER_AT=<s>` | A lightning strike 1 km away this many seconds after the start |
+| `AURORA_THUNDER_HOLD=<flash>` | The lightning's light on the world held at this brightness |
 
 ### Details
+
+- **Weather (`AURORA_RAIN`, `AURORA_THUNDER_*`)**: the weather of the
+  Environment window's Weather section is drawn for this viewer only.
+  `AURORA_RAIN=<0..1>` sets the rain (0 none, 1 a downpour) for captures
+  and stays until the section is touched in that session; the wind, the
+  puddles, the thunder and the quality come from the settings.
+  `AURORA_RAIN_SPEED=<scale>` (0.1 to 4, default 1) scales the drops' fall
+  speed from their real terminal speed. `AURORA_RAIN_DEBUG=1` colours the
+  ground by its wetness memory: yellow, outside the memory; red, only
+  assumed open (seen beyond the shelter map); green, wet; blue, dry under
+  cover; brighter, the wetter. `AURORA_THUNDER_AT=<s>` makes one strike
+  1 km away, `s` seconds after the start, whether Thunder is on or not: its
+  flash at once and, for most strikes, a bolt in the sky in its direction,
+  then its thunder about 3 s later (heard only with `AURORA_DEMO_SOUND` in
+  demo mode). `AURORA_THUNDER_HOLD=<flash>` holds the lightning's light on
+  the world at this brightness (about 1 for a strike a kilometre away, up to
+  1.6 for the nearest), to capture the lit sky and scene; it does not hold
+  the bolt. A capture of the bolt itself: `AURORA_THUNDER_AT` with
+  `AURORA_CAPTURE_FRAMES` set to land within a tenth of a second of it.
 
 - **`AURORA_DEMO_AA_SWITCH=<frame>:<mode>[,<frame>:<mode>…]`**: the
   anti-aliasing changes at each frame given (modes of `AURORA_AA`). A change

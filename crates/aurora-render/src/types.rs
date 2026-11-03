@@ -1254,11 +1254,20 @@ pub struct RainLook {
     pub puddles: bool,
     /// How far the wet ground and its puddles are drawn (m).
     pub distance: f32,
+    /// The wind now (m/s): the drops' slant.
+    pub wind: [f32; 2],
+    /// How far the wind has carried the drops so far (m).
+    pub drift: [f32; 2],
 }
 
 impl Default for RainLook {
     fn default() -> Self {
-        Self { puddles: true, distance: 38.0 }
+        Self {
+            puddles: true,
+            distance: 38.0,
+            wind: [0.0; 2],
+            drift: [0.0; 2],
+        }
     }
 }
 

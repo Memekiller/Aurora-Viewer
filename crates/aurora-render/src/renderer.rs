@@ -172,6 +172,9 @@ struct FrameU {
     /// Rain prototype's look: x puddles (0/1), y how far the wet ground is
     /// drawn (m).
     rain_look: [f32; 4],
+    /// Rain prototype's wind: xy how far it has carried the drops (m), zw
+    /// the wind now (m/s).
+    rain_wind: [f32; 4],
 }
 
 /// Must match `ShadowParams` in object.wgsl.
@@ -5472,6 +5475,7 @@ impl Backend {
         u.rain_wet = self.rain_wet.uniform;
         u.rain_wet_step = self.rain_wet.step;
         u.rain_look = [f32::from(u8::from(f.rain_look.puddles)), f.rain_look.distance, 0.0, 0.0];
+        u.rain_wind = [f.rain_look.drift[0], f.rain_look.drift[1], f.rain_look.wind[0], f.rain_look.wind[1]];
         u.selection_color = f.selection_color;
         u.rez_gradient = f.rez_gradient;
         u.view_proj = vp.to_cols_array_2d();

@@ -719,11 +719,10 @@ fn weather_section(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
                 w.amount = amount;
             }
         });
-        // the wind (not yet)
+        // the wind, in gusts
         ui.horizontal(|ui| {
             row_label(ui, p, &aurora_i18n::tr!("ui-weather-wind"), &aurora_i18n::tr!("ui-weather-wind-tip"));
-            ui.add_enabled(false, egui::Slider::new(&mut w.wind, 0.0..=1.0).show_value(false))
-                .on_disabled_hover_text(soon);
+            ui.add(egui::Slider::new(&mut w.wind, 0.0..=1.0).show_value(false));
         });
         // the puddles and how far the wet ground goes
         ui.horizontal(|ui| {

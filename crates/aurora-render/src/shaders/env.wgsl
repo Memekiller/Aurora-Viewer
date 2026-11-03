@@ -1632,7 +1632,6 @@ fn fs_water_particle_under(in: WaterParticleOut) -> @location(0) vec4<f32> {
 // the box's edges, so the wrap never shows.
 
 const RAIN_BOX: vec3<f32> = vec3<f32>(44.0, 44.0, 30.0);
-const RAIN_WIND: vec2<f32> = vec2<f32>(1.1, 0.4);
 // How long the eye smears a drop into a streak (s).
 const RAIN_EXPOSURE: f32 = 0.05;
 // Drops are never drawn thinner than this many pixels (they fade instead).
@@ -1678,12 +1677,16 @@ fn vs_rain(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance
     let diameter = min(0.9 + heavy * 0.6 - log(1.0 - rain_rand(seed + 3u) * 0.999) * (0.5 + heavy), 6.0);
     let speed = (9.65 - 10.3 * exp(-0.6 * diameter)) * rain_speed_scale();
     let time = frame.camera_pos.w;
-    let velocity = vec3<f32>(RAIN_WIND * (0.8 + speed * 0.04), -speed);
+    // the wind carries the drops (small ones a little more): the slant from
+    // the wind now, the place from all it blew so far (a gust bends the
+    // rain, no drop jumps)
+    let carried = 0.8 + speed * 0.04;
+    let velocity = vec3<f32>(frame.rain_wind.zw * carried, -speed);
     // the box is centered on the camera, a little above it; drops keep their
     // world place (parallax) and wrap through its faces
     let cam = frame.camera_pos.xyz;
     let corner = cam - RAIN_BOX * vec3<f32>(0.5, 0.5, 0.35);
-    let moved = base + velocity * time;
+    let moved = base + vec3<f32>(frame.rain_wind.xy * carried, -speed * time);
     let pos = corner + (moved - corner - floor((moved - corner) / RAIN_BOX) * RAIN_BOX);
 
     // a streak: the distance fallen in about 1/16 s, a few millimeters wide,
@@ -2568,7 +2571,10 @@ fn rain_far_streaks(anchor: vec2<f32>, d: vec3<f32>, scene: f32, pixel: f32, hea
         let column = w * 7.0;
         let streak_len = 0.9 * pow(radius / 22.0, 0.7);
         for (var s = 0; s < 2; s++) {
-            let u = theta * radius + f32(s) * column * 0.37;
+            // slanted by the wind across the view (a drop falling `speed`
+            // blown sideways at `blown` keeps x + z * blown / speed)
+            let blown = dot(frame.rain_wind.zw, vec2<f32>(-sin(theta), cos(theta)));
+            let u = theta * radius + f32(s) * column * 0.37 + p.z * blown / speed;
             let col = floor(u / column);
             let seed = bitcast<u32>(i32(col)) * 747796405u + u32(k * 2 + s) * 2891336453u + 17u;
             if (rain_rand(seed + 3u) > heavy * 0.8 + 0.1) { continue; }

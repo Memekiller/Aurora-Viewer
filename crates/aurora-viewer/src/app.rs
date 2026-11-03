@@ -522,6 +522,8 @@ pub struct App {
     rain_last: Option<Instant>,
     /// The weather settings as last saved (saved again when changed).
     weather_saved: crate::weather::WeatherSettings,
+    /// The weather's wind, in gusts.
+    weather_wind: crate::weather::Wind,
     /// Movement keys held since, and the server position then (stuck agent).
     stuck_watch: Option<(Instant, Vec3)>,
     stuck_logged: Option<Instant>,
@@ -1338,6 +1340,7 @@ impl App {
             rain_sound_dt: Instant::now(),
             rain_last: None,
             weather_saved: Default::default(),
+            weather_wind: Default::default(),
             stuck_watch: None,
             stuck_logged: None,
             attachments_logged: 0,
@@ -5173,10 +5176,20 @@ impl App {
     /// the water.
     fn update_wind_sound(&mut self, dt: f32) {
         let agent = &self.world.agent;
-        let region_wind = self
+        let mut region_wind = self
             .world
             .main()
             .map_or(Vec3::ZERO, |r| r.wind.velocity(agent.position, r.heightmap.size_x as f32));
+        // the weather's wind: blowing the region's way, in gusts; heard
+        // outdoors (walking too, not only flying), faint under cover
+        let strength = self.settings.weather.wind;
+        self.weather_wind.advance(std::time::Instant::now(), strength, region_wind.truncate());
+        let weather_wind = strength > 0.0;
+        if weather_wind {
+            let open = self.scene.sound_reverb.sky.map_or(1.0, |s| s.exposure.clamp(0.0, 1.0));
+            region_wind = self.weather_wind.now.extend(0.0) * (0.15 + 0.85 * open);
+        }
+        let agent = &self.world.agent;
         // demo runs stay silent unless AURORA_DEMO_SOUND or AURORA_DEMO_WIND
         let demo_silent = self.demo && std::env::var_os("AURORA_DEMO_SOUND").is_none() && crate::scene::wind_sound::demo_spec().is_none();
         let input = crate::scene::wind_sound::WindInput {
@@ -5185,7 +5198,7 @@ impl App {
             rotation: agent.body_rotation(),
             audible: matches!(self.screen, Screen::World)
                 && !demo_silent
-                && agent.flying
+                && (agent.flying || weather_wind)
                 && !agent.seated
                 && agent.position.z >= self.world.main_water_height(),
         };
@@ -9606,7 +9619,7 @@ impl App {
             // the photo's isolation, "show only" on an empty background
             cutout: self.world.photo_isolation.empty_background(),
             rain: self.settings.weather.rain(),
-            rain_look: self.settings.weather.rain_look(),
+            rain_look: self.settings.weather.rain_look(&self.weather_wind),
             look: None,
         };
         // a photo's look, or the live view's in the photo mode

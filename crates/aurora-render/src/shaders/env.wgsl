@@ -1747,6 +1747,26 @@ fn rain_sheltered(world: vec3<f32>) -> f32 {
     return 1.0 - open * 0.25;
 }
 
+// A drop blown by the wind comes in slanted: it is sheltered too where its
+// path, traced back up against the wind, passes under cover (a wall or a
+// roof upwind), so that a building leaves a dry zone on its lee side and no
+// drop comes out of a wall. Three points up the path of a drop of middling
+// speed (about 6.5 m/s, the slant of `carried` over `speed`).
+fn rain_sheltered_slanted(world: vec3<f32>) -> f32 {
+    var covered = rain_sheltered(world);
+    let slope = frame.rain_wind.zw / 6.5;
+    let flat = dot(slope, slope);
+    if (flat < 0.0025 || covered > 0.99) { return covered; }
+    // no more than about 70° from the vertical
+    let s = slope * min(1.0, 2.75 / sqrt(flat));
+    let up = array<f32, 3>(1.2, 3.5, 8.0);
+    for (var i = 0; i < 3; i++) {
+        covered = max(covered, rain_sheltered(world + vec3<f32>(-s * up[i], up[i])));
+        if (covered > 0.99) { break; }
+    }
+    return covered;
+}
+
 // The light local lights give a drop: some all around it, much more when the
 // lamp is behind it seen from the camera (the halo of rain around a street
 // light). Point lights only; projectors are left out of the prototype.
@@ -1804,7 +1824,7 @@ fn rain_streak(in: RainOut, soft: f32) -> vec4<f32> {
     // drops a lamp lights stand out of the dark
     let lit = min(dot(lamps, vec3<f32>(0.2126, 0.7152, 0.0722)) * 0.12, 0.15);
     var alpha = taper * sqrt(r) * (0.22 + fresnel * 0.55 + lit) * in.life;
-    alpha *= 1.0 - rain_sheltered(in.world);
+    alpha *= 1.0 - rain_sheltered_slanted(in.world);
     // soft where a drop meets the ground or a wall behind it
     let depth = scene_depth_at(suv);
     var over_water = false;
@@ -2618,16 +2638,17 @@ fn fs_rain_far(in: RainWetOut) -> @location(0) vec4<f32> {
     if (depth > 0.0) { scene = distance(world_from_depth(uv, depth), cam); }
     let behind = textureSampleLevel(scene_tex, lin_clamp, uv, 0.0).rgb;
     // only where the air along the view is open to the sky: under a roof
-    // (a big hall, a glass roof) there is none, through its windows there is
+    // (a big hall, a glass roof) there is none, through its windows there is.
+    // Open as soon as one point along it is (the most open of them): from
+    // under a porch or an awning the nearer points are covered while the
+    // view goes on out into the rain, and a mean of them dimmed the rain in
+    // the shape of the roof, like a shadow cast on it
     var open = 0.0;
-    var looked = 0.0;
     let reach = array<f32, 4>(12.0, 18.0, 26.0, 36.0);
     for (var k = 0; k < 4; k++) {
         if (reach[k] > scene) { break; }
-        open += 1.0 - rain_sheltered(cam + d * reach[k]);
-        looked += 1.0;
+        open = max(open, 1.0 - rain_sheltered(cam + d * reach[k]));
     }
-    if (looked > 0.0) { open /= looked; } else { open = 0.0; }
     if (open <= 0.01) { discard; }
 
     // the two anchors: cell centres of a grid, and of the same grid moved

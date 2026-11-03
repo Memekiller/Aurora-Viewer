@@ -1847,16 +1847,15 @@ fn rain_ring_detail(footprint: f32) -> f32 {
 
 // Ripple rings: one drop per 0.6 m cell, every 0.9 s at a random time and
 // place; the normal tilts across each ring's expanding crest.
-fn rain_ripples(xy: vec2<f32>, time: f32) -> vec2<f32> {
-    let cell = 0.6;
+fn rain_ripples_layer(xy: vec2<f32>, time: f32, cell: f32, period: f32, salt: u32) -> vec2<f32> {
     let base = floor(xy / cell);
     var slope = vec2<f32>(0.0);
     for (var j = -1; j <= 1; j++) {
         for (var i = -1; i <= 1; i++) {
             let c = base + vec2<f32>(f32(i), f32(j));
-            let seed = u32(i32(c.x) * 73856093) ^ u32(i32(c.y) * 19349663);
+            let seed = u32(i32(c.x) * 73856093) ^ u32(i32(c.y) * 19349663) ^ salt;
             let offset = vec2<f32>(rain_rand(seed), rain_rand(seed + 1u));
-            let phase = time / 0.9 + rain_rand(seed + 2u);
+            let phase = time / period + rain_rand(seed + 2u);
             let age = fract(phase);
             let centre = (c + offset) * cell;
             let d = xy - centre;
@@ -1867,6 +1866,27 @@ fn rain_ripples(xy: vec2<f32>, time: f32) -> vec2<f32> {
         }
     }
     return slope;
+}
+
+fn rain_ripples(xy: vec2<f32>, time: f32) -> vec2<f32> {
+    return rain_ripples_layer(xy, time, 0.6, 0.9, 0u);
+}
+
+// A surface of standing water in rain of strength `heavy`: the rings get
+// denser as it rains harder (two more layers of them, smaller and quicker,
+// come in), and a downpour churns it (a fine, fast chop), so that its
+// reflections break up instead of staying a mirror. `detail`: what the
+// pixels can show of it (`rain_ring_detail`).
+fn rain_water_churn(xy: vec2<f32>, time: f32, heavy: f32, detail: f32) -> vec2<f32> {
+    var slope = rain_ripples_layer(xy, time, 0.6, 0.9, 0u);
+    slope += rain_ripples_layer(xy + vec2<f32>(0.21, 0.37), time, 0.37, 0.7, 0x9e3779b9u) * smoothstep(0.25, 0.65, heavy);
+    slope += rain_ripples_layer(xy + vec2<f32>(0.53, 0.11), time, 0.23, 0.55, 0x85ebca6bu) * smoothstep(0.55, 0.95, heavy);
+    let t = time * 9.0;
+    let chop = vec2<f32>(
+        sin(xy.x * 37.0 + t + sin(xy.y * 23.0 - t * 0.7) * 2.0) + sin(xy.y * 29.0 - t * 1.3),
+        sin(xy.y * 41.0 - t + sin(xy.x * 19.0 + t * 0.8) * 2.0) + sin(xy.x * 31.0 + t * 1.1));
+    slope += chop * 0.18 * heavy * heavy;
+    return slope * detail;
 }
 
 // What a puddle mirrors along `r`: a short march through the depth prepass,
@@ -2181,7 +2201,7 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
     if (puddle > 0.01) {
         let along = max(abs(dot(view, vec3<f32>(0.0, 0.0, 1.0))), 0.05);
         let footprint = dist * 1.15 * frame.screen.w / along;
-        let ripple = rain_ripples(world.xy, frame.camera_pos.w) * puddle * sqrt(raining) * rain_ring_detail(footprint);
+        let ripple = rain_water_churn(world.xy, frame.camera_pos.w, raining, rain_ring_detail(footprint)) * puddle * sqrt(raining);
         let np = normalize(vec3<f32>(ripple * 0.06, 1.0));
         let r = reflect(-view, np);
         let fresnel = 0.02037 + 0.97963 * pow(1.0 - max(dot(np, view), 0.0), 5.0);
@@ -2281,7 +2301,7 @@ fn rain_water_rings(world: vec3<f32>, footprint: f32) -> vec2<f32> {
     let reach = 1.0 - smoothstep(30.0, 45.0, distance(world, frame.camera_pos.xyz));
     if (reach <= 0.0) { return vec2<f32>(0.0); }
     let open = 1.0 - rain_sheltered(world + vec3<f32>(0.0, 0.0, 0.1));
-    return rain_ripples(world.xy, frame.camera_pos.w) * (0.35 * sqrt(heavy) * reach * open * rain_ring_detail(footprint));
+    return rain_water_churn(world.xy, frame.camera_pos.w, heavy, rain_ring_detail(footprint)) * (0.35 * sqrt(heavy) * reach * open);
 }
 
 

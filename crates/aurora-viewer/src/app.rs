@@ -524,6 +524,12 @@ pub struct App {
     weather_saved: crate::weather::WeatherSettings,
     /// The weather's wind, in gusts.
     weather_wind: crate::weather::Wind,
+    /// The weather in effect this frame: the settings, or what the region's
+    /// environment sets over them when regions may (`update_weather_now`).
+    weather_now: crate::weather::WeatherSettings,
+    /// The region weather read from the environment in effect, keyed by its
+    /// day cycle's map and sky track (parsed again only when they change).
+    region_weather: Option<(usize, usize, Option<crate::weather::region::RegionWeather>)>,
     /// The weather's thunder and lightning.
     thunder: crate::scene::thunder::Thunder,
     /// AURORA_THUNDER_AT's strike is done.
@@ -1345,6 +1351,8 @@ impl App {
             rain_last: None,
             weather_saved: Default::default(),
             weather_wind: Default::default(),
+            weather_now: Default::default(),
+            region_weather: None,
             thunder: Default::default(),
             thunder_demo_done: false,
             stuck_watch: None,
@@ -5132,13 +5140,13 @@ impl App {
         self.scene.update_sound_occlusion(&self.world, engine, listener.pos, occlusion, now);
         // the reverb of the surroundings (Aurora's own)
         let reverb = crate::scene::sound_reverb::forced().unwrap_or(self.settings.audio.sound_reverb);
-        let raining = self.settings.weather.rain() > 0.0;
+        let raining = self.weather_now.rain() > 0.0;
         self.scene
             .update_sound_reverb(&self.world, engine, listener.pos, reverb, raining, now);
         // rain prototype: its sound, leaning toward the open sky
         let demo_silent = self.demo && std::env::var_os("AURORA_DEMO_SOUND").is_none();
         let input = crate::scene::rain_sound::RainSoundInput {
-            rain: self.settings.weather.rain(),
+            rain: self.weather_now.rain(),
             sky: self.scene.sound_reverb.sky,
             forward: (self.camera.target - self.camera.position).normalize_or(Vec3::X),
             underwater: (self.world.main_water_height() - self.camera.position.z).max(0.0),
@@ -5183,9 +5191,9 @@ impl App {
     fn update_thunder(&mut self) {
         let demo_silent = self.demo && std::env::var_os("AURORA_DEMO_SOUND").is_none();
         let input = crate::scene::thunder::ThunderInput {
-            enabled: self.settings.weather.thunder,
-            rain: self.settings.weather.rain(),
-            frequency: self.settings.weather.thunder_frequency,
+            enabled: self.weather_now.thunder,
+            rain: self.weather_now.rain(),
+            frequency: self.weather_now.thunder_frequency,
             forward: (self.camera.target - self.camera.position).normalize_or(Vec3::X),
             sky: self.scene.sound_reverb.sky,
             underwater: self.camera.position.z < self.world.main_water_height(),
@@ -5230,6 +5238,49 @@ impl App {
         fp.fog_color += white * k * 0.15;
     }
 
+    /// The weather in effect: the Weather settings, or, when regions may set
+    /// it ("Let regions set the weather") and the environment in effect (the
+    /// parcel's, else the region's) carries a weather code for the camera's
+    /// sky track, what that code gives now (weather/region.rs). Every viewer
+    /// with the same code, seed and clock shows the same weather.
+    fn update_weather_now(&mut self) {
+        let own = &self.settings.weather;
+        let mut now = None;
+        if own.region_weather
+            && self.in_world()
+            && let Ok((day, _, _)) = self.world.eep.day_settings(true)
+        {
+            let altitudes = self.world.eep.altitudes();
+            let z = self.camera.position.z;
+            // LLEnvironment::calculateSkyTrackForAltitude (0-based)
+            let track = match altitudes.iter().position(|a| z <= *a) {
+                Some(0) => 0,
+                None => 3,
+                Some(i) => i.min(4) - 1,
+            };
+            let key = (Arc::as_ptr(&day) as usize, track);
+            let code = match self.region_weather {
+                Some((ptr, t, code)) if (ptr, t) == key => code,
+                _ => {
+                    let code = crate::weather::region::code_in_day(&day, track);
+                    if let Some(c) = code {
+                        log::info!("region weather: {} on sky track {}", c.code(), track + 1);
+                    }
+                    self.region_weather = Some((key.0, key.1, code));
+                    code
+                }
+            };
+            if let Some(code) = code {
+                let region = self.world.main().and_then(|r| r.info.as_ref()).map_or(uuid::Uuid::nil(), |i| i.region_id);
+                let secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0.0, |d| d.as_secs_f64());
+                now = Some(code.apply(own, code.seed_for(region), secs));
+            }
+        }
+        self.weather_now = now.unwrap_or_else(|| own.clone());
+    }
+
     /// audio_update_wind: the wind at our avatar, heard while flying above
     /// the water.
     fn update_wind_sound(&mut self, dt: f32) {
@@ -5240,8 +5291,8 @@ impl App {
             .map_or(Vec3::ZERO, |r| r.wind.velocity(agent.position, r.heightmap.size_x as f32));
         // the weather's wind: blowing the region's way, in gusts; heard
         // outdoors (walking too, not only flying), faint under cover
-        let range = self.settings.weather.wind_range();
-        let heading = self.settings.weather.wind_heading();
+        let range = self.weather_now.wind_range();
+        let heading = self.weather_now.wind_heading();
         self.weather_wind
             .advance(std::time::Instant::now(), range, heading, region_wind.truncate());
         let weather_wind = range.1 > 0.0;
@@ -8385,6 +8436,7 @@ impl App {
         }
         self.update_native_movelock();
         self.update_movement();
+        self.update_weather_now();
         self.update_audio();
         self.update_wind_sound(dt);
         self.update_thunder();
@@ -9691,8 +9743,8 @@ impl App {
             // the photo's isolation, "show only" on an empty background
             cutout: self.world.photo_isolation.empty_background(),
             // rain or snow: the drops pass draws either
-            rain: self.settings.weather.fall(),
-            rain_look: self.settings.weather.rain_look(&self.weather_wind),
+            rain: self.weather_now.fall(),
+            rain_look: self.weather_now.rain_look(&self.weather_wind),
             look: None,
         };
         // the lightning, lighting the world
@@ -10410,7 +10462,7 @@ impl App {
         // rain prototype: while it rains, and while the ground dries after
         // (the renderer's wetness memory: about 8 minutes), the terrain
         // heights and the G-buffer stay
-        if self.settings.weather.rain() > 0.0 {
+        if self.weather_now.rain() > 0.0 {
             self.rain_last = Some(Instant::now());
         }
         let raining = self.rain_last.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(600));

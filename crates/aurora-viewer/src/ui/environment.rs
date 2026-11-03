@@ -692,7 +692,6 @@ fn weather_section(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
     widgets::collapsing(ui, p, "environment_weather", title, false, |ui| {
         ui.spacing_mut().item_spacing = Vec2::new(4.0, 6.0);
         ui.spacing_mut().slider_width = COMBO_W - 50.0;
-        let soon = aurora_i18n::tr!("ui-weather-coming-soon");
         // what falls
         ui.horizontal(|ui| {
             row_label(
@@ -826,12 +825,9 @@ fn weather_section(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
                 };
             }
         });
-        // the regions' weather (not yet; off until chosen)
-        ui.add_enabled_ui(false, |ui| {
-            widgets::checkbox(ui, p, &mut w.region_weather, aurora_i18n::tr!("ui-weather-region"));
-        })
-        .response
-        .on_disabled_hover_text(soon);
+        // the regions' weather (weather/region.rs; off until chosen)
+        widgets::checkbox(ui, p, &mut w.region_weather, aurora_i18n::tr!("ui-weather-region"))
+            .on_hover_text(aurora_i18n::tr!("ui-weather-region-tip"));
     });
     if *w != before {
         w.touched = true;

@@ -12933,7 +12933,6 @@ app-vr-leave = Appuyez sur { $key } pour revenir au mode bureau
 
 ui-weather = Météo
 ui-weather-aurora = Météo Aurora
-ui-weather-coming-soon = Bientôt disponible
 ui-weather-precipitation = Précipitations
 ui-weather-precipitation-tip = Ce qui tombe du ciel, pour votre vue seulement
 ui-weather-rain = Pluie
@@ -12972,3 +12971,4 @@ ui-weather-quality-low = Basse
 ui-weather-quality-medium = Moyenne
 ui-weather-quality-high = Haute
 ui-weather-region = Laisser les régions choisir la météo
+ui-weather-region-tip = Les régions et parcelles dont l'environnement porte un code Météo Aurora choisissent la pluie, la neige, le vent et l'orage ; tous ceux qui les laissent faire voient la même météo au même moment

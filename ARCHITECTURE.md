@@ -2766,6 +2766,22 @@ Scene object actions and visible HUDs therefore remain usable without moving
 the AF point; Alt camera gestures and Shift group focus keep their priority.
 The upper-left controls and help in `ui/viewfinder.rs` document the shortcut.
 
+Aurora Weather (Aurora's own; the Legacy Viewer has none): `weather/mod.rs`
+holds the settings of the Environment window's section and of Preferences ›
+Graphics › Sky and environment (rain or snow, amount, wind lulls, gusts and
+direction, puddles, thunder, quality) and the gusting `Wind`.
+`weather/region.rs` is the opt-in region weather: a ten-letter code with a
+check at the end of an environment's day, track or sky name (the names reach
+every viewer, an EEP item's description does not), and the schedule it runs:
+windows of 5 minutes to a day, a seeded hash of the window decides whether
+and how hard it falls, eased between windows, so that viewers with the same
+code, seed and clock show the same weather with nothing sent.
+`App::update_weather_now` lays it over the settings each frame. The rain and
+snow are drawn by `aurora-render` (`shaders/env.wgsl`, the rain sections:
+drops or flakes, the shelter map, distant layers, wet ground and puddles),
+the thunder and lightning by `scene/thunder.rs` (its bolts as particles),
+the rain's sound by `scene/rain_sound.rs`.
+
 ## Life of a frame
 
 `joystick/` owns persisted NDOF settings, native input and the six-axis flycam

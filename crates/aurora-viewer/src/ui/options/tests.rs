@@ -1606,7 +1606,11 @@ fn a_borrowed_row_edits_the_setting_of_its_page() {
 #[test]
 fn the_weather_lives_in_graphics_and_every_row_the_aurora_page_borrows_exists() {
     let paths = collected();
-    let graphics: Vec<_> = paths.iter().filter(|(page, _)| *page == Page::Graphics).map(|(_, p)| p.as_str()).collect();
+    let graphics: Vec<_> = paths
+        .iter()
+        .filter(|(page, _)| *page == Page::Graphics)
+        .map(|(_, p)| p.as_str())
+        .collect();
     // the paths Preferences › Aurora borrows (pages/aurora.rs): a misspelt
     // one would draw nothing
     for path in [
@@ -1620,10 +1624,14 @@ fn the_weather_lives_in_graphics_and_every_row_the_aurora_page_borrows_exists() 
         "weather.puddle_distance",
         "weather.thunder",
         "weather.thunder_frequency",
+        "weather.region_weather",
         "weather.quality",
     ] {
         assert!(graphics.contains(&path), "`{path}` is not a Graphics row: {graphics:?}");
     }
-    let elsewhere: Vec<_> = paths.iter().filter(|(page, p)| *page != Page::Graphics && p.starts_with("weather.")).collect();
+    let elsewhere: Vec<_> = paths
+        .iter()
+        .filter(|(page, p)| *page != Page::Graphics && p.starts_with("weather."))
+        .collect();
     assert!(elsewhere.is_empty(), "weather rows owned by another page: {elsewhere:?}");
 }

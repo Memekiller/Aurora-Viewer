@@ -12937,7 +12937,6 @@ app-vr-leave = Press { $key } to return to desktop mode
 
 ui-weather = Weather
 ui-weather-aurora = Aurora Weather
-ui-weather-coming-soon = Coming soon
 ui-weather-precipitation = Falling
 ui-weather-precipitation-tip = What falls from the sky, for your view only
 ui-weather-rain = Rain
@@ -12976,3 +12975,4 @@ ui-weather-quality-low = Low
 ui-weather-quality-medium = Medium
 ui-weather-quality-high = High
 ui-weather-region = Let regions set the weather
+ui-weather-region-tip = Regions and parcels whose environment carries an Aurora Weather code set the rain, snow, wind and thunder; everyone who lets them sees the same weather at the same time

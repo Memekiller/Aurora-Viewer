@@ -12920,7 +12920,6 @@ app-vr-leave = { $key } キーでデスクトップモードに戻ります
 
 ui-weather = 天気
 ui-weather-aurora = Aurora の天気
-ui-weather-coming-soon = 近日対応
 ui-weather-precipitation = 降るもの
 ui-weather-precipitation-tip = 空から降るもの（自分の表示のみ）
 ui-weather-rain = 雨
@@ -12959,3 +12958,4 @@ ui-weather-quality-low = 低
 ui-weather-quality-medium = 中
 ui-weather-quality-high = 高
 ui-weather-region = リージョンに天気を任せる
+ui-weather-region-tip = 環境に Aurora の天気コードがあるリージョンや区画が、雨、雪、風、雷を決めます。許可した人は全員、同じ時に同じ天気を見ます

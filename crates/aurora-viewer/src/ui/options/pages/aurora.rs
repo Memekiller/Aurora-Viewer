@@ -369,6 +369,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         "weather.puddle_distance",
                         "weather.thunder",
                         "weather.thunder_frequency",
+                        "weather.region_weather",
                         "weather.quality",
                     ],
                 );

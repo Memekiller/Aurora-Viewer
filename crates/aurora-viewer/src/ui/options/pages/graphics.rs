@@ -204,6 +204,11 @@ fn weather(cx: &mut Cx) {
                 |ui, s| share(ui, &mut s.weather.thunder_frequency),
             );
         });
+        cx.toggle(
+            tr!("ui-weather-region"),
+            tr!("ui-weather-region-tip"),
+            &field!(weather.region_weather),
+        );
         cx.choice(
             tr!("ui-weather-quality"),
             tr!("ui-weather-quality-tip"),

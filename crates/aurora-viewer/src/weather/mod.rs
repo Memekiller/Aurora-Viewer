@@ -1,6 +1,8 @@
 //! The weather of this viewer: what the Environment window's "Weather"
 //! section sets, kept in the settings. It is drawn for your view only.
 
+pub mod region;
+
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;

@@ -2770,13 +2770,18 @@ Aurora Weather (Aurora's own; the Legacy Viewer has none): `weather/mod.rs`
 holds the settings of the Environment window's section and of Preferences ›
 Graphics › Sky and environment (rain or snow, amount, wind lulls, gusts and
 direction, puddles, thunder, quality) and the gusting `Wind`.
-`weather/region.rs` is the opt-in region weather: a ten-letter code with a
-check at the end of an environment's day, track or sky name (the names reach
-every viewer, an EEP item's description does not), and the schedule it runs:
-windows of 5 minutes to a day, a seeded hash of the window decides whether
-and how hard it falls, eased between windows, so that viewers with the same
-code, seed and clock show the same weather with nothing sent.
-`App::update_weather_now` lays it over the settings each frame. The rain and
+`weather/region.rs` is the opt-in region weather, laid out as EEP is: a
+sky carries the weather of its moment (what falls, its chance, the
+lightest and heaviest, the wind, thunder) as a nine-letter code at the end
+of its name, the day cycle the timing (its key frames, blended as their
+colours are; a sky without a code is clear) and, at the end of the day's
+name, a five-letter schedule (the period, 5 minutes to a day, and the
+seed). The names reach every viewer, an EEP item's description does not.
+In each period a seeded hash decides whether and how hard it falls, eased
+between periods, so viewers with the same environment and clock show the
+same weather with nothing sent. The sky editor's Aurora Weather tab writes
+a sky's code and previews it; the day editor writes the schedule and marks
+the key frames that carry weather. `App::update_weather_now` lays it over the settings each frame. The rain and
 snow are drawn by `aurora-render` (`shaders/env.wgsl`, the rain sections:
 drops or flakes, the shelter map, distant layers, wet ground and puddles),
 the thunder and lightning by `scene/thunder.rs` (its bolts as particles),

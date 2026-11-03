@@ -529,7 +529,7 @@ pub struct App {
     weather_now: crate::weather::WeatherSettings,
     /// The region weather read from the environment in effect, keyed by its
     /// day cycle's map and sky track (parsed again only when they change).
-    region_weather: Option<(usize, usize, Option<crate::weather::region::RegionWeather>)>,
+    region_weather: Option<(usize, usize, Option<crate::weather::region::RegionDay>)>,
     /// The weather's thunder and lightning.
     thunder: crate::scene::thunder::Thunder,
     /// AURORA_THUNDER_AT's strike is done.
@@ -5238,17 +5238,33 @@ impl App {
         fp.fog_color += white * k * 0.15;
     }
 
-    /// The weather in effect: the Weather settings, or, when regions may set
+    /// The weather in effect: the Weather settings; or an environment
+    /// editor's preview of a sky's Aurora Weather; or, when regions may set
     /// it ("Let regions set the weather") and the environment in effect (the
-    /// parcel's, else the region's) carries a weather code for the camera's
-    /// sky track, what that code gives now (weather/region.rs). Every viewer
-    /// with the same code, seed and clock shows the same weather.
+    /// parcel's, else the region's) carries Aurora Weather on the camera's
+    /// sky track, what its day gives now (weather/region.rs). Every viewer
+    /// with the same environment and clock shows the same weather.
     fn update_weather_now(&mut self) {
+        use crate::weather::region::RegionDay;
         let own = &self.settings.weather;
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0.0, |d| d.as_secs_f64());
+        let region = self.world.main().and_then(|r| r.info.as_ref()).map_or(uuid::Uuid::nil(), |i| i.region_id);
+        // the editors' preview: this sky's weather, on this viewer only
+        let preview = self
+            .env_editor
+            .weather_preview
+            .filter(|_| self.env_editor.open)
+            .or_else(|| self.day_editor.weather_preview());
+        if let Some((weather, falling)) = preview {
+            self.weather_now = RegionDay::fixed(weather).apply(own, region, secs, falling);
+            return;
+        }
         let mut now = None;
         if own.region_weather
             && self.in_world()
-            && let Ok((day, _, _)) = self.world.eep.day_settings(true)
+            && let Ok((day, length, offset)) = self.world.eep.day_settings(true)
         {
             let altitudes = self.world.eep.altitudes();
             let z = self.camera.position.z;
@@ -5259,23 +5275,16 @@ impl App {
                 Some(i) => i.min(4) - 1,
             };
             let key = (Arc::as_ptr(&day) as usize, track);
-            let code = match self.region_weather {
-                Some((ptr, t, code)) if (ptr, t) == key => code,
-                _ => {
-                    let code = crate::weather::region::code_in_day(&day, track);
-                    if let Some(c) = code {
-                        log::info!("region weather: {} on sky track {}", c.code(), track + 1);
-                    }
-                    self.region_weather = Some((key.0, key.1, code));
-                    code
+            let fresh = !matches!(&self.region_weather, Some((ptr, t, _)) if (*ptr, *t) == key);
+            if fresh {
+                let read = RegionDay::read(&day, track, length, offset);
+                if read.is_some() {
+                    log::info!("region weather on sky track {}", track + 1);
                 }
-            };
-            if let Some(code) = code {
-                let region = self.world.main().and_then(|r| r.info.as_ref()).map_or(uuid::Uuid::nil(), |i| i.region_id);
-                let secs = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_or(0.0, |d| d.as_secs_f64());
-                now = Some(code.apply(own, code.seed_for(region), secs));
+                self.region_weather = Some((key.0, key.1, read));
+            }
+            if let Some((_, _, Some(day))) = &self.region_weather {
+                now = Some(day.apply(own, region, secs, false));
             }
         }
         self.weather_now = now.unwrap_or_else(|| own.clone());

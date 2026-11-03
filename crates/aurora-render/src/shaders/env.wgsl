@@ -1945,8 +1945,16 @@ fn rain_puddle_reflection(world: vec3<f32>, r: vec3<f32>) -> vec3<f32> {
     return sky_color(vec3<f32>(r.xy, abs(r.z)));
 }
 
-// Lamps in wet ground: a highlight per point light, sharp in puddles.
-fn rain_wet_lamps(world: vec3<f32>, frag: vec2<f32>, n: vec3<f32>, view: vec3<f32>, power: f32) -> vec3<f32> {
+// Lamps in wet ground: a highlight per point light, stretched toward the
+// viewer into a streak, as on a wet road at night: the film and the
+// ripples tilt it every way, but only tilts along the line of sight move
+// the reflection much (`across`, `along`: how far it spreads each way, a
+// slope's tangent). Sharp in puddles, softer on damp ground.
+fn rain_wet_lamps(world: vec3<f32>, frag: vec2<f32>, n: vec3<f32>, view: vec3<f32>, across: f32, along: f32) -> vec3<f32> {
+    var t = view - n * dot(view, n);
+    t = select(normalize(t), vec3<f32>(1.0, 0.0, 0.0), dot(t, t) < 1e-6);
+    let b = cross(n, t);
+    let peak = 0.35 / sqrt(across * along);
     var lights = light_walk(world, frag);
     var sum = vec3<f32>(0.0);
     for (var i = next_light(&lights); i >= 0; i = next_light(&lights)) {
@@ -1954,9 +1962,14 @@ fn rain_wet_lamps(world: vec3<f32>, frag: vec2<f32>, n: vec3<f32>, view: vec3<f3
         let to_l = lt.pos_radius.xyz - world;
         let dist = length(to_l);
         if (dist >= lt.pos_radius.w) { continue; }
+        let l = to_l / max(dist, 1e-4);
+        if (dot(l, n) <= 0.0) { continue; }
         let atten = ll_light_atten(dist / lt.pos_radius.w, lt.color_falloff.w);
-        let h = normalize(to_l / max(dist, 1e-4) + view);
-        sum += lt.color_falloff.rgb * atten * pow(max(dot(n, h), 0.0), power) * (power / 40.0);
+        let h = normalize(l + view);
+        let hn = max(dot(h, n), 1e-3);
+        let sx = dot(h, b) / (across * hn);
+        let sy = dot(h, t) / (along * hn);
+        sum += lt.color_falloff.rgb * atten * exp(-(sx * sx + sy * sy)) * peak;
     }
     return sum;
 }
@@ -2224,7 +2237,8 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
     let fresnel_d = 0.02037 + 0.97963 * pow(1.0 - max(dot(nf, view), 0.0), 5.0);
     let sky = sky_color(vec3<f32>(rd.xy, abs(rd.z)));
     let sheen = max(sky * fresnel_d - deeper * 0.5, vec3<f32>(0.0)) * film;
-    let glints = rain_wet_lamps(world, clip, nf, view, mix(300.0, 90.0, porosity)) * film * 0.1;
+    let glint_across = mix(0.05, 0.12, porosity);
+    let glints = rain_wet_lamps(world, clip, nf, view, glint_across, glint_across * 4.0) * film * 0.15;
     var color = deeper + sheen + glints;
 
     if (puddle > 0.01) {
@@ -2235,7 +2249,7 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
         let r = reflect(-view, np);
         let fresnel = 0.02037 + 0.97963 * pow(1.0 - max(dot(np, view), 0.0), 5.0);
         let mirrored = rain_puddle_reflection(world + vec3<f32>(0.0, 0.0, 0.02), r);
-        let pool = mix(base * 0.3, mirrored, 0.35 + fresnel * 0.6) + rain_wet_lamps(world, clip, np, view, 400.0);
+        let pool = mix(base * 0.3, mirrored, 0.35 + fresnel * 0.6) + rain_wet_lamps(world, clip, np, view, 0.025, 0.06 + 0.14 * raining);
         color = mix(color, pool, puddle);
     }
     let a = reach * max(smoothstep(0.0, 0.15, heavy), puddle);

@@ -2603,6 +2603,18 @@ fn fs_rain_far(in: RainWetOut) -> @location(0) vec4<f32> {
     var scene = 1e9;
     if (depth > 0.0) { scene = distance(world_from_depth(uv, depth), cam); }
     let behind = textureSampleLevel(scene_tex, lin_clamp, uv, 0.0).rgb;
+    // only where the air along the view is open to the sky: under a roof
+    // (a big hall, a glass roof) there is none, through its windows there is
+    var open = 0.0;
+    var looked = 0.0;
+    let reach = array<f32, 4>(12.0, 18.0, 26.0, 36.0);
+    for (var k = 0; k < 4; k++) {
+        if (reach[k] > scene) { break; }
+        open += 1.0 - rain_sheltered(cam + d * reach[k]);
+        looked += 1.0;
+    }
+    if (looked > 0.0) { open /= looked; } else { open = 0.0; }
+    if (open <= 0.01) { discard; }
 
     // the two anchors: cell centres of a grid, and of the same grid moved
     // by half a cell; each weighs the more the nearer the camera is to it
@@ -2616,12 +2628,12 @@ fn fs_rain_far(in: RainWetOut) -> @location(0) vec4<f32> {
     var lift = 0.0;
     if (weight_a > 0.001) { lift += rain_far_streaks(anchor_a, d, scene, pixel, heavy) * weight_a; }
     if (weight_a < 0.999) { lift += rain_far_streaks(anchor_b, d, scene, pixel, heavy) * (1.0 - weight_a); }
-    lift *= horizon;
+    lift *= horizon * open;
 
     // the veil: drops too fine to see, more the farther the surface behind
     // (smoothly: a step per layer drew an edge where one met the ground)
     let veil_from = 22.0 / max(flat_len, 0.05);
-    let veil = (1.0 - exp(-max(scene - veil_from, 0.0) / 90.0)) * 0.2 * horizon;
+    let veil = (1.0 - exp(-max(scene - veil_from, 0.0) / 90.0)) * 0.2 * horizon * open;
     let a = clamp(lift * pow(heavy, 1.2), 0.0, 0.5) + clamp(veil * heavy * heavy * 1.25, 0.0, 0.25);
     if (a < 0.002) { discard; }
     // the rain's own colour: what is behind it lightened toward the sky,

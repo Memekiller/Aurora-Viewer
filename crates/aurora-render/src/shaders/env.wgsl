@@ -2330,7 +2330,13 @@ fn fs_rain_wet_g(in: RainWetOut) -> @location(0) vec4<f32> {
         if (dot(n, frame.camera_pos.xyz - world) < 0.0) { n = -n; }
         // rough reads as porous; metal never soaks anything up
         let porosity = clamp((g.z - 0.15) / 0.7, 0.0, 1.0) * (1.0 - g.w);
-        out = rain_wet_surface(in.clip.xy, uv, world, n, porosity, false, rain_build_level(uv, world, n));
+        // the median around says whether a surface is level, but only one
+        // that is itself near level by its shape (the depth's, no normal
+        // map): a leg in front of the ground is mostly ground around it
+        let shape = rain_depth_normal(uv, world).z;
+        let around = rain_build_level(uv, world, n);
+        let level = select(around, min(around, shape), shape < 0.9);
+        out = rain_wet_surface(in.clip.xy, uv, world, n, porosity, false, level);
     }
     if (out.a < 0.01) { discard; }
     return out;

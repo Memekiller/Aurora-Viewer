@@ -38,7 +38,7 @@ pub struct WeatherSettings {
     pub puddles: bool,
     /// How far the wet ground and its puddles are drawn (m).
     pub puddle_distance: f32,
-    /// Thunder and lightning in heavy rain. Not used yet.
+    /// Thunder and lightning in heavy rain.
     pub thunder: bool,
     /// Let regions set the weather through their environment. Not used yet.
     pub region_weather: bool,

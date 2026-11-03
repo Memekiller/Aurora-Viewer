@@ -524,6 +524,10 @@ pub struct App {
     weather_saved: crate::weather::WeatherSettings,
     /// The weather's wind, in gusts.
     weather_wind: crate::weather::Wind,
+    /// The weather's thunder and lightning.
+    thunder: crate::scene::thunder::Thunder,
+    /// AURORA_THUNDER_AT's strike is done.
+    thunder_demo_done: bool,
     /// Movement keys held since, and the server position then (stuck agent).
     stuck_watch: Option<(Instant, Vec3)>,
     stuck_logged: Option<Instant>,
@@ -1341,6 +1345,8 @@ impl App {
             rain_last: None,
             weather_saved: Default::default(),
             weather_wind: Default::default(),
+            thunder: Default::default(),
+            thunder_demo_done: false,
             stuck_watch: None,
             stuck_logged: None,
             attachments_logged: 0,
@@ -5172,6 +5178,54 @@ impl App {
         }
     }
 
+    /// Weather: thunder and lightning in heavy rain (the flash is lit in
+    /// the frame, `thunder_light`).
+    fn update_thunder(&mut self) {
+        let demo_silent = self.demo && std::env::var_os("AURORA_DEMO_SOUND").is_none();
+        let input = crate::scene::thunder::ThunderInput {
+            enabled: self.settings.weather.thunder,
+            rain: self.settings.weather.rain(),
+            forward: (self.camera.target - self.camera.position).normalize_or(Vec3::X),
+            sky: self.scene.sound_reverb.sky,
+            underwater: self.camera.position.z < self.world.main_water_height(),
+            audible: matches!(self.screen, Screen::World) && !demo_silent,
+        };
+        // AURORA_THUNDER_AT=<s>: a strike a kilometre away that long after
+        // the start (demo captures of the flash)
+        static AT: std::sync::OnceLock<Option<(Instant, f32)>> = std::sync::OnceLock::new();
+        if let Some((start, s)) = *AT.get_or_init(|| {
+            std::env::var("AURORA_THUNDER_AT").ok().and_then(|v| v.parse().ok()).map(|s| (Instant::now(), s))
+        }) && start.elapsed().as_secs_f32() >= s
+            && !self.thunder_demo_done
+        {
+            self.thunder_demo_done = true;
+            self.thunder.strike(Instant::now(), Some(1000.0));
+        }
+        self.thunder.update(self.audio_engine.as_ref(), &input, Instant::now());
+    }
+
+    /// The lightning's light on the frame: a cold white along the sun's (or
+    /// the moon's) light and over the sky, strong at night, faint by day.
+    fn thunder_light(&self, fp: &mut FrameParams) {
+        // AURORA_THUNDER_HOLD=<flash>: a flash held (demo captures)
+        static HOLD: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+        let hold = *HOLD.get_or_init(|| std::env::var("AURORA_THUNDER_HOLD").ok().and_then(|v| v.parse().ok()));
+        let flash = hold.unwrap_or(self.thunder.flash);
+        if flash <= 0.001 {
+            return;
+        }
+        let lum = |c: Vec3| c.dot(Vec3::new(0.2126, 0.7152, 0.0722));
+        let t = ((lum(fp.sky_zenith) - 0.05) / 0.35).clamp(0.0, 1.0);
+        let dark = 1.0 - t * t * (3.0 - 2.0 * t);
+        let k = flash * (0.25 + 1.75 * dark);
+        let white = Vec3::new(0.8, 0.85, 1.0);
+        fp.sun_color += white * k * 2.5;
+        fp.sky_zenith += white * k * 0.6;
+        fp.sky_horizon += white * k * 0.5;
+        fp.ground_color += white * k * 0.2;
+        fp.fog_color += white * k * 0.15;
+    }
+
     /// audio_update_wind: the wind at our avatar, heard while flying above
     /// the water.
     fn update_wind_sound(&mut self, dt: f32) {
@@ -8324,6 +8378,7 @@ impl App {
         self.update_movement();
         self.update_audio();
         self.update_wind_sound(dt);
+        self.update_thunder();
         let mut late_camera_frame = None;
         let mut late_controls = None;
         if self.in_world() {
@@ -9622,6 +9677,8 @@ impl App {
             rain_look: self.settings.weather.rain_look(&self.weather_wind),
             look: None,
         };
+        // the lightning, lighting the world
+        self.thunder_light(&mut fp);
         // a photo's look, or the live view's in the photo mode
         let focus = fp.dof.as_ref().map(|d| d.focus);
         self.snapshots.look_focus = focus;

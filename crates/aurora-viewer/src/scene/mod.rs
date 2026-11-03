@@ -51,6 +51,7 @@ pub mod portals;
 pub mod probes;
 mod rain_ground;
 pub mod rain_sound;
+pub mod thunder;
 pub mod rez;
 mod sculpt_watch;
 mod selection_demo;

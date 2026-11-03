@@ -737,14 +737,10 @@ fn weather_section(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
                     .suffix(" m"),
             );
         });
-        // thunder (not yet)
+        // thunder and lightning, in heavy rain
         ui.horizontal(|ui| {
             row_label(ui, p, &aurora_i18n::tr!("ui-weather-thunder"), &aurora_i18n::tr!("ui-weather-thunder-tip"));
-            ui.add_enabled_ui(false, |ui| {
-                widgets::checkbox(ui, p, &mut w.thunder, "");
-            })
-            .response
-            .on_disabled_hover_text(soon);
+            widgets::checkbox(ui, p, &mut w.thunder, "");
         });
         // quality (not yet)
         ui.horizontal(|ui| {

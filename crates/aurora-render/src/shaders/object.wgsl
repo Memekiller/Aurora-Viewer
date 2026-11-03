@@ -1820,6 +1820,8 @@ struct ShadowOut {
 struct ShadowParams {
     vp: mat4x4<f32>,
     anim_clock: vec4<u32>,  // the animation clocks, as Frame's
+    // x: 1 for the rain prototype's shelter map
+    kind: vec4<u32>,
 };
 
 @group(3) @binding(0) var<uniform> shadow_params: ShadowParams;
@@ -1854,6 +1856,12 @@ fn fs_shadow(in: ShadowOut) {
     portal_clip(rec, in.world_pos);
     let tex_alpha = sample_tex(rec.tex.x, in.uv).a;
     let alpha = tex_alpha * rec.base_color.a;
+    // the rain's shelter map: any blended texel that is there at all keeps
+    // the rain off (glass); masked ones as they cast
+    if (shadow_params.kind.x == 1u && (rec.flags.x & FLAG_ALPHA_BLEND) != 0u) {
+        if (alpha < 0.02) { discard; }
+        return;
+    }
     if ((rec.flags.x & (FLAG_ALPHA_MASK | FLAG_ALPHA_BLEND)) != 0u) {
         if ((rec.flags.x & FLAG_ALPHA_BLEND) == 0u) {
             if (alpha < rec.params.w) { discard; }

@@ -417,14 +417,15 @@ fn face_mask(i: u32) -> u32 {
         }
     }
     // casters of the projectors' shadow maps, all drawn with the alpha test
-    let blend_ok = fp != PASS_BLEND || rigged || (fl & F_BLEND_CASTS) != 0u;
-    if (caster || (shelters && blend_ok)) {
+    // (the shelter map takes blended faces too: a glass roof keeps the rain
+    // off as well as a tiled one)
+    if (caster || shelters) {
         // the rain's shelter map: what stands still overhead only (an
         // avatar, a rigged mesh, a rolling ball leave no dry patch)
         let moves = (o.flags & (OBJ_AVATAR | OBJ_RIGGED | OBJ_PHYSICAL)) != 0u;
         for (var k = 0u; k < 2u; k++) {
             let shelter = k == 1u && (fl & F_SPOT_SHELTER) != 0u;
-            let takes = select(caster, blend_ok, shelter);
+            let takes = caster || shelter;
             if (takes && (fl & (F_SPOT << k)) != 0u && spot_in(k, c, r) && !(shelter && moves)) {
                 m |= 1u << (BIN_SPOT + k);
             }

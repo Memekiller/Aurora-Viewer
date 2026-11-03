@@ -2050,7 +2050,7 @@ fn fs_rain_wet_update(in: RainWetOut) -> @location(0) vec4<f32> {
                     wet_h = top;
                 } else {
                     // cover that stays: what is under it dries, slowly
-                    wet_h += (top - wet_h) * (1.0 - exp(-dt / 90.0));
+                    wet_h += (top - wet_h) * (1.0 - exp(-dt / 30.0));
                 }
             }
             amount += (1.0 - amount) * (1.0 - exp(-dt * (0.5 + heavy) / 8.0));

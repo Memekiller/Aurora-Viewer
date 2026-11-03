@@ -177,6 +177,8 @@ struct FrameU {
 struct ShadowU {
     vp: [[f32; 4]; 4],
     anim_clock: [u32; 4],
+    /// x: 1 for the rain prototype's shelter map (`fs_shadow`)
+    kind: [u32; 4],
 }
 
 #[repr(C)]
@@ -2225,7 +2227,7 @@ pub(crate) fn shadow_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("shadow params"),
         entries: &[
-            uniform_entry(0, wgpu::ShaderStages::VERTEX),
+            uniform_entry(0, wgpu::ShaderStages::VERTEX_FRAGMENT),
             wgpu::BindGroupLayoutEntry {
                 binding: 1,
                 visibility: wgpu::ShaderStages::FRAGMENT,
@@ -6463,12 +6465,14 @@ impl Backend {
             );
         }
         // projector shadow maps of the frame (none without shadows)
-        let spot_vp: [Option<Mat4>; SPOT_SHADOWS] = spot_shadow_views(f, self.rain_shelter(f)).map(|v| v.map(|(_, m)| m));
+        let shelter = self.rain_shelter(f);
+        let spot_vp: [Option<Mat4>; SPOT_SHADOWS] = spot_shadow_views(f, shelter).map(|v| v.map(|(_, m)| m));
         for (i, m) in cascades.iter().copied().map(Some).chain(spot_vp).enumerate() {
             let Some(m) = m else { continue };
             let u = ShadowU {
                 vp: m.to_cols_array_2d(),
                 anim_clock: self.anim_now,
+                kind: [u32::from(shelter && i == CASCADES + RAIN_SHELTER_MAP), 0, 0, 0],
             };
             self.queue.write_buffer(&self.shadow_buffers[i], 0, bytemuck::bytes_of(&u));
         }

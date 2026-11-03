@@ -1853,15 +1853,22 @@ fn rain_ripples_layer(xy: vec2<f32>, time: f32, cell: f32, period: f32, salt: u3
     for (var j = -1; j <= 1; j++) {
         for (var i = -1; i <= 1; i++) {
             let c = base + vec2<f32>(f32(i), f32(j));
-            let seed = u32(i32(c.x) * 73856093) ^ u32(i32(c.y) * 19349663) ^ salt;
-            let offset = vec2<f32>(rain_rand(seed), rain_rand(seed + 1u));
-            let phase = time / period + rain_rand(seed + 2u);
+            let cell_seed = u32(i32(c.x) * 73856093) ^ u32(i32(c.y) * 19349663) ^ salt;
+            // each cell's drops come at their own pace, and each lands
+            // somewhere new, bigger or smaller, or not at all (a third of
+            // the time): no grid shows
+            let own = period * (0.7 + 0.6 * rain_rand(cell_seed + 7u));
+            let phase = time / own + rain_rand(cell_seed + 2u);
             let age = fract(phase);
+            let seed = cell_seed ^ (u32(i32(floor(phase))) * 2654435761u);
+            if (rain_rand(seed + 5u) < 0.33) { continue; }
+            let offset = vec2<f32>(rain_rand(seed), rain_rand(seed + 1u));
+            let size = 0.5 + rain_rand(seed + 3u);
             let centre = (c + offset) * cell;
             let d = xy - centre;
             let dist = length(d);
-            let radius = age * 0.35;
-            let ring = exp(-pow((dist - radius) * 28.0, 2.0)) * (1.0 - age);
+            let radius = age * cell * 0.58 * size;
+            let ring = exp(-pow((dist - radius) * 28.0, 2.0)) * (1.0 - age) * min(size, 1.0);
             slope += d / max(dist, 1e-4) * ring * sin((dist - radius) * 60.0);
         }
     }

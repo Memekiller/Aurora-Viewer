@@ -2151,7 +2151,7 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
     let smooth_area = area.w < 100.0;
     // per triangle facings (no G-buffer): only smooth, near-level ground,
     // judged over the area, not the triangle
-    let up = select(smoothstep(0.5, 0.85, n.z), smoothstep(0.95, 0.985, area.z) * select(0.0, 1.0, smooth_area), level_only);
+    let up = select(smoothstep(0.5, 0.85, build_level), smoothstep(0.95, 0.985, area.z) * select(0.0, 1.0, smooth_area), level_only);
     // how wet: the memory (wet for a while after the rain, and under cover
     // that only passed), else the shelter now
     var open = rain_wet_memory(world + n * 0.05);
@@ -2280,7 +2280,11 @@ fn rain_oct_decode(e_in: vec2<f32>) -> vec3<f32> {
 fn rain_build_level(uv: vec2<f32>, world: vec3<f32>, n: vec3<f32>) -> f32 {
     let dist = max(distance(world, frame.camera_pos.xyz), 0.5);
     let r = clamp(0.3 * frame.screen.y / (1.15 * dist), 2.0, 40.0);
-    var level = n.z;
+    // the mean of the facings around, not the least level of them: a
+    // normal map's bevels (the edges of every tile, glyph and plank) tilt
+    // this way and that and cancel out, a curved build's (a log) do not;
+    // water lies flat on the surface, whatever its texture shows
+    var sum = n;
     for (var k = 0; k < 8; k++) {
         let a = f32(k) * 0.7853982;
         let reach = select(r, r * 0.5, (k & 1) == 1);
@@ -2293,9 +2297,9 @@ fn rain_build_level(uv: vec2<f32>, world: vec3<f32>, n: vec3<f32>) -> f32 {
         if (abs(g.x - 0.5) < 0.004 && abs(g.y - 0.5) < 0.004 && g.z > 0.996 && g.w < 0.004) { continue; }
         var gn = rain_oct_decode(g.xy);
         if (dot(gn, frame.camera_pos.xyz - p) < 0.0) { gn = -gn; }
-        level = min(level, gn.z);
+        sum += gn;
     }
-    return level;
+    return normalize(sum).z;
 }
 
 @fragment

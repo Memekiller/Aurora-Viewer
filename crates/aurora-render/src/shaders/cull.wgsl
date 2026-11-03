@@ -370,7 +370,11 @@ fn face_mask(i: u32) -> u32 {
     let in_view = sphere_in(frame.planes, c, r) && !(own_first_person && ((o.flags & OBJ_FIRST_PERSON_HIDDEN) != 0u || (f.bits & FACE_FIRST_PERSON_HIDDEN) != 0u));
     let casts = (fl & F_SHADOWS) != 0u && d - r < frame.dist.x;
     let reflects = (fl & F_REFLECTIONS) != 0u && d - r < frame.dist.y;
-    if (!in_view && !casts && !reflects) {
+    // the rain's shelter map takes all of its square, however far the
+    // shadows reach (a roof beyond them would leave the floor under it
+    // open to the rain, cut at the seams between a building's meshes)
+    let shelters = (fl & F_SHADOWS) != 0u && (fl & F_SPOT_SHELTER) != 0u && (fl & (F_SPOT << 1u)) != 0u && spot_in(1u, c, r);
+    if (!in_view && !casts && !reflects && !shelters) {
         return 0u;
     }
     // tiny objects far away (small object culling)
@@ -413,13 +417,15 @@ fn face_mask(i: u32) -> u32 {
         }
     }
     // casters of the projectors' shadow maps, all drawn with the alpha test
-    if (caster) {
+    let blend_ok = fp != PASS_BLEND || rigged || (fl & F_BLEND_CASTS) != 0u;
+    if (caster || (shelters && blend_ok)) {
         // the rain's shelter map: what stands still overhead only (an
         // avatar, a rigged mesh, a rolling ball leave no dry patch)
         let moves = (o.flags & (OBJ_AVATAR | OBJ_RIGGED | OBJ_PHYSICAL)) != 0u;
         for (var k = 0u; k < 2u; k++) {
             let shelter = k == 1u && (fl & F_SPOT_SHELTER) != 0u;
-            if ((fl & (F_SPOT << k)) != 0u && spot_in(k, c, r) && !(shelter && moves)) {
+            let takes = select(caster, blend_ok, shelter);
+            if (takes && (fl & (F_SPOT << k)) != 0u && spot_in(k, c, r) && !(shelter && moves)) {
                 m |= 1u << (BIN_SPOT + k);
             }
         }

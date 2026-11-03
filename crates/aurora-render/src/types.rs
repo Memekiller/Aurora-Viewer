@@ -1247,6 +1247,21 @@ pub struct OverlayEffect {
     pub texture: [u32; 4],
 }
 
+/// Rain prototype: the weather settings the wet ground follows.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RainLook {
+    /// Puddles gather on level ground.
+    pub puddles: bool,
+    /// How far the wet ground and its puddles are drawn (m).
+    pub distance: f32,
+}
+
+impl Default for RainLook {
+    fn default() -> Self {
+        Self { puddles: true, distance: 38.0 }
+    }
+}
+
 /// Camera and environment for one frame.
 #[derive(Debug, Clone)]
 pub struct FrameParams {
@@ -1347,6 +1362,8 @@ pub struct FrameParams {
     pub cutout: bool,
     /// Rain prototype: how hard it rains, 0 (none) to 1 (a downpour).
     pub rain: f32,
+    /// Rain prototype: the puddles and how far the wet ground is drawn.
+    pub rain_look: RainLook,
     /// The photo's look (looks.rs), over the image once tone mapped; None:
     /// none, at no cost.
     pub look: Option<crate::looks::PhotoLook>,

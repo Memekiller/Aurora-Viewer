@@ -78,6 +78,7 @@ mod report_abuse;
 mod scene;
 mod screen_rate;
 mod settings;
+mod weather;
 mod shape_editor;
 mod slapp;
 mod slurl;

@@ -169,6 +169,9 @@ struct FrameU {
     /// s; < 0: no history), w how soaked a place new to it is (the rain's
     /// time so far, then drying).
     rain_wet_step: [f32; 4],
+    /// Rain prototype's look: x puddles (0/1), y how far the wet ground is
+    /// drawn (m).
+    rain_look: [f32; 4],
 }
 
 /// Must match `ShadowParams` in object.wgsl.
@@ -5468,6 +5471,7 @@ impl Backend {
         u.rain = [f.rain.clamp(0.0, 1.0), area[0], area[1], area[2]];
         u.rain_wet = self.rain_wet.uniform;
         u.rain_wet_step = self.rain_wet.step;
+        u.rain_look = [f32::from(u8::from(f.rain_look.puddles)), f.rain_look.distance, 0.0, 0.0];
         u.selection_color = f.selection_color;
         u.rez_gradient = f.rez_gradient;
         u.view_proj = vp.to_cols_array_2d();

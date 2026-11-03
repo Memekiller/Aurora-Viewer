@@ -520,6 +520,8 @@ pub struct App {
     rain_sound_dt: Instant,
     /// Rain prototype: when it last rained (the ground dries for a while).
     rain_last: Option<Instant>,
+    /// The weather settings as last saved (saved again when changed).
+    weather_saved: crate::weather::WeatherSettings,
     /// Movement keys held since, and the server position then (stuck agent).
     stuck_watch: Option<(Instant, Vec3)>,
     stuck_logged: Option<Instant>,
@@ -1335,6 +1337,7 @@ impl App {
             rain_sound: Default::default(),
             rain_sound_dt: Instant::now(),
             rain_last: None,
+            weather_saved: Default::default(),
             stuck_watch: None,
             stuck_logged: None,
             attachments_logged: 0,
@@ -5120,13 +5123,13 @@ impl App {
         self.scene.update_sound_occlusion(&self.world, engine, listener.pos, occlusion, now);
         // the reverb of the surroundings (Aurora's own)
         let reverb = crate::scene::sound_reverb::forced().unwrap_or(self.settings.audio.sound_reverb);
-        let raining = self.env_ui.rain() > 0.0;
+        let raining = self.settings.weather.rain() > 0.0;
         self.scene
             .update_sound_reverb(&self.world, engine, listener.pos, reverb, raining, now);
         // rain prototype: its sound, leaning toward the open sky
         let demo_silent = self.demo && std::env::var_os("AURORA_DEMO_SOUND").is_none();
         let input = crate::scene::rain_sound::RainSoundInput {
-            rain: self.env_ui.rain(),
+            rain: self.settings.weather.rain(),
             sky: self.scene.sound_reverb.sky,
             forward: (self.camera.target - self.camera.position).normalize_or(Vec3::X),
             underwater: (self.world.main_water_height() - self.camera.position.z).max(0.0),
@@ -9602,7 +9605,8 @@ impl App {
             },
             // the photo's isolation, "show only" on an empty background
             cutout: self.world.photo_isolation.empty_background(),
-            rain: self.env_ui.rain(),
+            rain: self.settings.weather.rain(),
+            rain_look: self.settings.weather.rain_look(),
             look: None,
         };
         // a photo's look, or the live view's in the photo mode
@@ -10318,7 +10322,7 @@ impl App {
         // rain prototype: while it rains, and while the ground dries after
         // (the renderer's wetness memory: about 8 minutes), the terrain
         // heights and the G-buffer stay
-        if self.env_ui.rain() > 0.0 {
+        if self.settings.weather.rain() > 0.0 {
             self.rain_last = Some(Instant::now());
         }
         let raining = self.rain_last.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(600));
@@ -16087,8 +16091,14 @@ impl App {
                     self.panels.time_of_day,
                     &mut open,
                     &mut lighting,
+                    &mut self.settings.weather,
                 );
                 self.panels.environment = open;
+                // the weather saved once a slider is let go
+                if self.settings.weather != self.weather_saved && !ctx.input(|i| i.pointer.any_down()) {
+                    self.weather_saved = self.settings.weather.clone();
+                    self.settings.save();
+                }
                 let reset = self.personal_lighting(&ctx, &p, lighting);
                 self.env_actions(env_actions.into_iter().chain(reset));
                 self.draw_env_editor(&ctx, &p);

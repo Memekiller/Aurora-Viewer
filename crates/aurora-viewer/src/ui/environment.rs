@@ -19,6 +19,8 @@ use egui::{RichText, Vec2};
 use glam::{Quat, Vec3};
 use uuid::Uuid;
 
+use crate::weather::{PUDDLE_DISTANCE, Precipitation, WeatherQuality, WeatherSettings};
+
 /// What the window asks the app to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EnvAction {
@@ -59,9 +61,6 @@ pub struct EnvironmentUi {
     pub night: Option<NightSkyPick>,
     /// Open this list's drop-down on the next frame (demo captures).
     pub open_list: Option<SettingsKind>,
-    /// Rain prototype: how hard it rains (0..1) once the slider moved; until
-    /// then `AURORA_RAIN`.
-    rain: Option<f32>,
 }
 
 impl EnvironmentUi {
@@ -79,20 +78,6 @@ impl EnvironmentUi {
         }
     }
 
-    /// Rain prototype: how hard it rains, 0 (none) to 1 (a downpour).
-    pub fn rain(&self) -> f32 {
-        self.rain.unwrap_or_else(|| {
-            static START: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
-            *START.get_or_init(|| {
-                std::env::var("AURORA_RAIN")
-                    .ok()
-                    .and_then(|v| v.parse::<f32>().ok())
-                    .unwrap_or(0.0)
-                    .clamp(0.0, 1.0)
-            })
-        })
-    }
-
     pub fn catalog(&self) -> &SettingsCatalog {
         &self.catalog
     }
@@ -107,6 +92,7 @@ impl EnvironmentUi {
         time_of_day: u8,
         open: &mut bool,
         lighting: &mut bool,
+        weather: &mut WeatherSettings,
     ) -> Vec<EnvAction> {
         let mut out = Vec::new();
         let screen = ctx.content_rect();
@@ -216,23 +202,8 @@ impl EnvironmentUi {
                     }
                 }
             });
-            // rain prototype: how hard it rains, for this viewer only
-            ui.horizontal(|ui| {
-                let (rect, resp) = ui.allocate_exact_size(Vec2::new(LABEL_W, 20.0), egui::Sense::hover());
-                ui.painter().text(
-                    rect.left_center(),
-                    egui::Align2::LEFT_CENTER,
-                    aurora_i18n::tr!("ui-environment-rain"),
-                    egui::FontId::proportional(12.5),
-                    p.ink,
-                );
-                resp.on_hover_text(aurora_i18n::tr!("ui-environment-rain-tip"));
-                let mut rain = self.rain();
-                let slider = egui::Slider::new(&mut rain, 0.0..=1.0).show_value(false);
-                if ui.add_sized(Vec2::new(COMBO_W, 20.0), slider).changed() {
-                    self.rain = Some(rain);
-                }
-            });
+            widgets::divider(ui, p);
+            weather_section(ui, p, weather);
             let status = if self.scan_left > 0 {
                 aurora_i18n::tr!("ui-environment-loading-inventory-folders", value0 = format!("{}", self.scan_left))
             } else if loading {
@@ -700,5 +671,107 @@ mod tests {
         assert!(d.y < -0.99, "90° is south of east: {d}");
         let (_, e) = azimuth_elevation(rotation_from(0.0, 90.0));
         assert!((e - 90.0).abs() < 0.1, "{e}");
+    }
+}
+
+/// A row's label in the label column, with its tip.
+fn row_label(ui: &mut egui::Ui, p: &Palette, text: &str, tip: &str) {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(LABEL_W, 20.0), egui::Sense::hover());
+    ui.painter().text(
+        rect.left_center(),
+        egui::Align2::LEFT_CENTER,
+        text,
+        egui::FontId::proportional(12.5),
+        p.ink,
+    );
+    resp.on_hover_text(tip);
+}
+
+/// "Weather": the rain (and later snow, wind, thunder) of this viewer only,
+/// folded away until opened. The controls not working yet are greyed out.
+fn weather_section(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
+    let before = w.clone();
+    widgets::collapsing(ui, p, "environment_weather", aurora_i18n::tr!("ui-weather"), false, |ui| {
+        ui.spacing_mut().item_spacing = Vec2::new(4.0, 6.0);
+        ui.spacing_mut().slider_width = COMBO_W - 50.0;
+        let soon = aurora_i18n::tr!("ui-weather-coming-soon");
+        // what falls
+        ui.horizontal(|ui| {
+            row_label(ui, p, &aurora_i18n::tr!("ui-weather-precipitation"), &aurora_i18n::tr!("ui-weather-precipitation-tip"));
+            let rain = aurora_i18n::tr!("ui-weather-rain");
+            let snow = aurora_i18n::tr!("ui-weather-snow");
+            let mut i = match w.precipitation {
+                Precipitation::Rain => 0,
+                Precipitation::Snow => 1,
+            };
+            if widgets::segmented(ui, p, &mut i, &[(rain, true), (snow, true)]) {
+                w.precipitation = if i == 0 { Precipitation::Rain } else { Precipitation::Snow };
+            }
+            if w.precipitation == Precipitation::Snow {
+                ui.label(RichText::new(soon).size(11.0).color(p.muted_dim));
+            }
+        });
+        // how much
+        ui.horizontal(|ui| {
+            row_label(ui, p, &aurora_i18n::tr!("ui-weather-amount"), &aurora_i18n::tr!("ui-weather-amount-tip"));
+            let mut amount = w.rain_or_amount();
+            if ui.add(egui::Slider::new(&mut amount, 0.0..=1.0).show_value(false)).changed() {
+                w.amount = amount;
+            }
+        });
+        // the wind (not yet)
+        ui.horizontal(|ui| {
+            row_label(ui, p, &aurora_i18n::tr!("ui-weather-wind"), &aurora_i18n::tr!("ui-weather-wind-tip"));
+            ui.add_enabled(false, egui::Slider::new(&mut w.wind, 0.0..=1.0).show_value(false))
+                .on_disabled_hover_text(soon);
+        });
+        // the puddles and how far the wet ground goes
+        ui.horizontal(|ui| {
+            row_label(ui, p, &aurora_i18n::tr!("ui-weather-puddles"), &aurora_i18n::tr!("ui-weather-puddles-tip"));
+            widgets::checkbox(ui, p, &mut w.puddles, "");
+        });
+        ui.horizontal(|ui| {
+            row_label(ui, p, &aurora_i18n::tr!("ui-weather-distance"), &aurora_i18n::tr!("ui-weather-distance-tip"));
+            ui.add(
+                egui::Slider::new(&mut w.puddle_distance, PUDDLE_DISTANCE)
+                    .step_by(1.0)
+                    .suffix(" m"),
+            );
+        });
+        // thunder (not yet)
+        ui.horizontal(|ui| {
+            row_label(ui, p, &aurora_i18n::tr!("ui-weather-thunder"), &aurora_i18n::tr!("ui-weather-thunder-tip"));
+            ui.add_enabled_ui(false, |ui| {
+                widgets::checkbox(ui, p, &mut w.thunder, "");
+            })
+            .response
+            .on_disabled_hover_text(soon);
+        });
+        // quality (not yet)
+        ui.horizontal(|ui| {
+            row_label(ui, p, &aurora_i18n::tr!("ui-weather-quality"), &aurora_i18n::tr!("ui-weather-quality-tip"));
+            let low = aurora_i18n::tr!("ui-weather-quality-low");
+            let medium = aurora_i18n::tr!("ui-weather-quality-medium");
+            let high = aurora_i18n::tr!("ui-weather-quality-high");
+            let mut i = match w.quality {
+                WeatherQuality::Low => 0,
+                WeatherQuality::Medium => 1,
+                WeatherQuality::High => 2,
+            };
+            ui.add_enabled_ui(false, |ui| {
+                widgets::segmented(ui, p, &mut i, &[(low, true), (medium, true), (high, true)]);
+            })
+            .response
+            .on_disabled_hover_text(soon);
+        });
+        // the regions' weather (not yet; off until chosen)
+        ui.add_enabled_ui(false, |ui| {
+            widgets::checkbox(ui, p, &mut w.region_weather, aurora_i18n::tr!("ui-weather-region"));
+        })
+        .response
+        .on_disabled_hover_text(soon);
+    });
+    if *w != before {
+        w.touched = true;
     }
 }

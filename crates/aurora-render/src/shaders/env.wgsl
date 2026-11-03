@@ -2215,7 +2215,8 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
     let raining = frame.rain.x;
     // the standing water: how long and hard it has rained, not the rain now
     let heavy = frame.rain_wet.w;
-    let reach = up * open * (1.0 - smoothstep(28.0, 38.0, dist));
+    let far = frame.rain_look.y;
+    let reach = up * open * (1.0 - smoothstep(far * 0.75, far, dist));
     if (reach < 0.01 || heavy <= 0.0) { return vec4<f32>(0.0); }
 
     let view = normalize(cam - world);
@@ -2231,7 +2232,9 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
     // edges; water runs off bumps (a rock's top) and gathers in dips
     var puddle = 0.0;
     let terrain = rain_terrain(world.xy);
-    if (terrain > -1e8 && abs(world.z - terrain) < 0.12) {
+    if (frame.rain_look.x < 0.5) {
+        // puddles off (the weather settings)
+    } else if (terrain > -1e8 && abs(world.z - terrain) < 0.12) {
         // on the terrain: the blobs of the builds' puddles, moved by the
         // heightmap: a dip fills sooner (2 cm deeper counts as much as a
         // tenth of the pattern), a hump later, steep ground never

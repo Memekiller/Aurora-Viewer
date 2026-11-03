@@ -1908,37 +1908,64 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
     let up = select(smoothstep(0.5, 0.85, n.z), smoothstep(0.95, 0.985, n.z), level_only);
     let open = 1.0 - rain_sheltered(world + n * 0.08);
     let heavy = frame.rain.x;
-    let wet = up * open * (1.0 - smoothstep(28.0, 38.0, dist)) * smoothstep(0.0, 0.25, heavy);
-    if (wet < 0.01) { return vec4<f32>(0.0); }
+    let reach = up * open * (1.0 - smoothstep(28.0, 38.0, dist));
+    if (reach < 0.01 || heavy <= 0.0) { return vec4<f32>(0.0); }
 
     let view = normalize(cam - world);
     let base = textureSampleLevel(scene_tex, lin_clamp, uv, 0.0).rgb;
-    // puddles: low flat spots of a noise pattern; water only pools within
-    // about 8 degrees of level, and its surface is level whatever the ground
-    // below is shaped like, broken only by the ripples
-    let shape = water_fx_noise(world.xy * 0.16) * 0.7 + water_fx_noise(world.xy * 0.55) * 0.3;
-    let pool_level = 0.66 - heavy * 0.12;
-    let puddle = smoothstep(pool_level, pool_level + 0.08, shape) * smoothstep(0.985, 0.995, n.z);
-    let ripple = rain_ripples(world.xy, frame.camera_pos.w) * puddle * sqrt(heavy);
-    let np = normalize(vec3<f32>(ripple * 0.06, 1.0));
-    let r = reflect(-view, np);
-    let fresnel = 0.02037 + 0.97963 * pow(1.0 - max(dot(np, view), 0.0), 5.0);
+    let lum = vec3<f32>(0.2126, 0.7152, 0.0722);
 
-    // damp: porous things darken, smooth ones gain a sheen
-    let rd = reflect(-view, n);
-    let fresnel_d = 0.02037 + 0.97963 * pow(1.0 - max(dot(n, view), 0.0), 5.0);
+    // puddles: the low spots of a noise pattern, tiny in a drizzle and
+    // spreading as the rain gets heavier; water only pools within about 8
+    // degrees of level, its surface level whatever the ground below is
+    // shaped like, broken only by the ripples
+    let shape = water_fx_noise(world.xy * 0.16) * 0.7 + water_fx_noise(world.xy * 0.55) * 0.3;
+    let pool_level = mix(0.78, 0.53, sqrt(heavy));
+    let puddle = smoothstep(pool_level, pool_level + 0.05, shape) * smoothstep(0.985, 0.995, n.z);
+
+    // damp: how wet each spot is. The cracks hold water first (pixels
+    // darker than their surroundings: the gaps between cobbles, the grain
+    // of wood), then patches, then all of it as the rain gets heavier.
+    let px = frame.screen.zw * 3.0;
+    var around = 0.0;
+    around += dot(textureSampleLevel(scene_tex, lin_clamp, uv + vec2<f32>(px.x, px.y), 0.0).rgb, lum);
+    around += dot(textureSampleLevel(scene_tex, lin_clamp, uv + vec2<f32>(-px.x, px.y), 0.0).rgb, lum);
+    around += dot(textureSampleLevel(scene_tex, lin_clamp, uv + vec2<f32>(px.x, -px.y), 0.0).rgb, lum);
+    around += dot(textureSampleLevel(scene_tex, lin_clamp, uv + vec2<f32>(-px.x, -px.y), 0.0).rgb, lum);
+    around *= 0.25;
+    let luma = dot(base, lum);
+    let crack = smoothstep(0.05, 0.3, (around - luma) / max(around, 1e-3));
+    let patches = water_fx_noise(world.xy * 0.35 + vec2<f32>(17.0, 3.0));
+    let soaked = clamp(heavy * 2.2 + crack * 0.6 + (patches - 0.5) * 0.5 - 0.15, 0.0, 1.0);
+
+    // wet things are darker and their colours deeper (the water film stops
+    // the light scattering off the surface's roughness), porous ones most
+    let darker = base * mix(1.0, mix(0.82, 0.5, porosity), soaked);
+    let deeper = max(mix(vec3<f32>(dot(darker, lum)), darker, 1.0 + 0.3 * soaked), vec3<f32>(0.0));
+    // a film of water: a sheen of the sky and the lamps, faint on porous
+    // ground; nothing is added where the sky would only lighten it into a
+    // haze. The film evens out the surface's small bumps: its facing is
+    // halfway to level, so the bevels of normal maps do not each catch a
+    // highlight (bright outlines around every stone and leaf).
+    let film = soaked * mix(0.6, 0.15, porosity);
+    let nf = normalize(mix(n, vec3<f32>(0.0, 0.0, 1.0), 0.5));
+    let rd = reflect(-view, nf);
+    let fresnel_d = 0.02037 + 0.97963 * pow(1.0 - max(dot(nf, view), 0.0), 5.0);
     let sky = sky_color(vec3<f32>(rd.xy, abs(rd.z)));
-    let darken = mix(0.88, 0.55, porosity);
-    let sheen = mix(0.6, 0.12, porosity);
-    let shine = mix(80.0, 16.0, porosity);
-    let damp = base * darken + sky * fresnel_d * sheen + rain_wet_lamps(world, clip, n, view, shine) * sheen;
-    var color = damp;
+    let sheen = max(sky * fresnel_d - deeper * 0.5, vec3<f32>(0.0)) * film;
+    let glints = rain_wet_lamps(world, clip, nf, view, mix(300.0, 90.0, porosity)) * film * 0.1;
+    var color = deeper + sheen + glints;
+
     if (puddle > 0.01) {
+        let ripple = rain_ripples(world.xy, frame.camera_pos.w) * puddle * sqrt(heavy);
+        let np = normalize(vec3<f32>(ripple * 0.06, 1.0));
+        let r = reflect(-view, np);
+        let fresnel = 0.02037 + 0.97963 * pow(1.0 - max(dot(np, view), 0.0), 5.0);
         let mirrored = rain_puddle_reflection(world + vec3<f32>(0.0, 0.0, 0.02), r);
         let pool = mix(base * 0.3, mirrored, 0.35 + fresnel * 0.6) + rain_wet_lamps(world, clip, np, view, 400.0);
-        color = mix(damp, pool, puddle);
+        color = mix(color, pool, puddle);
     }
-    let a = wet * mix(0.85, 1.0, puddle);
+    let a = reach * max(smoothstep(0.0, 0.15, heavy), puddle);
     return vec4<f32>(color * a, a);
 }
 

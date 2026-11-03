@@ -1641,6 +1641,8 @@ const RAIN_MIN_PX: f32 = 1.3;
 // Prototype tuning: the drops' speed relative to the real one
 // (renderer.rs, AURORA_RAIN_SPEED).
 override rain_speed: f32 = 1.0;
+// AURORA_RAIN_DEBUG=1: the wet pass shows the wetness memory instead
+override rain_debug: f32 = 0.0;
 fn rain_speed_scale() -> f32 {
     return max(rain_speed, 0.1);
 }
@@ -1916,6 +1918,8 @@ fn rain_reflect_probe(p: vec3<f32>) -> vec4<f32> {
 // a ray that slips behind an object's edge is not the object (each
 // object's reflection would grow a fringe, speckled by the ripples).
 fn rain_puddle_reflection(world: vec3<f32>, r: vec3<f32>) -> vec3<f32> {
+    let cam = frame.camera_pos.xyz;
+    let start = distance(world, cam);
     var t = 0.2;
     var prev_t = 0.0;
     var prev_gap = -1.0;
@@ -1934,7 +1938,12 @@ fn rain_puddle_reflection(world: vec3<f32>, r: vec3<f32>) -> vec3<f32> {
                 if (m.w < 0.0) { break; }
                 if (m.z > 0.0) { hi = mid; at = m; } else { lo = mid; }
             }
-            if (at.z < 0.08 + hi * 0.02) {
+            // and only something no nearer the camera than the puddle: the
+            // ray goes away from it, it never meets what stands in front
+            // (a leg just before a puddle is on screen where the ray is,
+            // only just in front of it)
+            let surface = distance(world + r * hi, cam) - at.z;
+            if (at.z < 0.08 + hi * 0.02 && surface > start - 0.05) {
                 return textureSampleLevel(scene_tex, lin_clamp, at.xy, 0.0).rgb;
             }
         }
@@ -2054,6 +2063,22 @@ fn fs_rain_wet_update(in: RainWetOut) -> @location(0) vec4<f32> {
 
 // How wet the surface at `world` is from the memory (0..1, blended between
 // cells); -1 outside it.
+// The memory's cell at `world`, for AURORA_RAIN_DEBUG: yellow, outside the
+// memory; red, only assumed open (seen beyond the shelter map); green, wet
+// by the memory, blue, dry (under cover); brighter, the wetter.
+fn rain_debug_color(world: vec3<f32>) -> vec4<f32> {
+    let extent = frame.rain_wet.z;
+    let size = textureDimensions(rain_wetness).x;
+    let pos = (world.xy - frame.rain_wet.xy) / extent * f32(size);
+    if (extent <= 0.0 || any(pos < vec2<f32>(0.0)) || any(pos >= vec2<f32>(f32(size)))) {
+        return vec4<f32>(0.6, 0.6, 0.0, 0.6);
+    }
+    let s = textureLoad(rain_wetness, vec2<i32>(pos), 0);
+    if (s.x < -1e8) { return vec4<f32>(0.7, 0.0, 0.0, 0.6) * (0.4 + 0.6 * s.y); }
+    let open = smoothstep(-0.3, -0.05, world.z - s.x);
+    return vec4<f32>(vec3<f32>(0.0, open, 1.0 - open) * (0.3 + 0.7 * s.y) * 0.6, 0.6);
+}
+
 fn rain_wet_memory(world: vec3<f32>) -> f32 {
     let extent = frame.rain_wet.z;
     if (extent <= 0.0) { return -1.0; }
@@ -2283,6 +2308,7 @@ fn fs_rain_wet(in: RainWetOut) -> @location(0) vec4<f32> {
     if (depth <= 0.0) { discard; }
     let world = world_from_depth(uv, depth);
     if (world.z < frame.params.y) { discard; }
+    if (rain_debug > 0.5) { return rain_debug_color(world); }
     let out = rain_wet_surface(in.clip.xy, uv, world, rain_depth_normal(uv, world), 0.6, true, 1.0);
     if (out.a < 0.01) { discard; }
     return out;
@@ -2352,6 +2378,7 @@ fn fs_rain_wet_g(in: RainWetOut) -> @location(0) vec4<f32> {
     if (depth <= 0.0) { discard; }
     let world = world_from_depth(uv, depth);
     if (world.z < frame.params.y) { discard; }
+    if (rain_debug > 0.5) { return rain_debug_color(world); }
     let g = textureLoad(rain_gbuf, vec2<i32>(in.clip.xy), 0);
     let cleared = abs(g.x - 0.5) < 0.004 && abs(g.y - 0.5) < 0.004 && g.z > 0.996 && g.w < 0.004;
     var out: vec4<f32>;

@@ -2086,10 +2086,11 @@ fn rain_drops(rain: f32) -> u32 {
 /// Rain prototype tuning: `AURORA_RAIN_SPEED=<scale>`, the drops' speed
 /// relative to the real terminal velocity for their size (default 1).
 fn rain_constants() -> &'static [(&'static str, f64)] {
-    static CONSTANTS: std::sync::OnceLock<[(&'static str, f64); 1]> = std::sync::OnceLock::new();
+    static CONSTANTS: std::sync::OnceLock<[(&'static str, f64); 2]> = std::sync::OnceLock::new();
     CONSTANTS.get_or_init(|| {
         let speed: f64 = std::env::var("AURORA_RAIN_SPEED").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0);
-        [("rain_speed", speed.clamp(0.1, 4.0))]
+        let debug = if std::env::var("AURORA_RAIN_DEBUG").is_ok_and(|v| v == "1") { 1.0 } else { 0.0 };
+        [("rain_speed", speed.clamp(0.1, 4.0)), ("rain_debug", debug)]
     })
 }
 
@@ -3793,6 +3794,7 @@ impl Backend {
             write_mask: wgpu::ColorWrites::ALL,
             depth_write: false,
             depth_compare: wgpu::CompareFunction::Always,
+            constants: rain_constants(),
             ..base("rain wet ground", "vs_rain_wet", "fs_rain_wet")
         });
         // the same reading the screen-space reflections' G-buffer (group 3)
@@ -3813,6 +3815,7 @@ impl Backend {
                     write_mask: wgpu::ColorWrites::ALL,
                     depth_write: false,
                     depth_compare: wgpu::CompareFunction::Always,
+                    constants: rain_constants(),
                     ..base("rain wet ground (G-buffer)", "vs_rain_wet", "fs_rain_wet_g")
                 },
             )

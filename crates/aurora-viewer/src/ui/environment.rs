@@ -685,7 +685,11 @@ pub(crate) fn compass_point(degrees: f32) -> String {
 /// folded away until opened. The controls not working yet are greyed out.
 fn weather_section(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
     let before = w.clone();
-    widgets::collapsing(ui, p, "environment_weather", aurora_i18n::tr!("ui-weather"), false, |ui| {
+    // "Aurora Weather" in the aurora gradient: Aurora's own, that other
+    // viewers do not show
+    let font = egui::FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()));
+    let title = crate::ui::options::aurora_text(p, aurora_i18n::tr!("ui-weather-aurora"), font);
+    widgets::collapsing(ui, p, "environment_weather", title, false, |ui| {
         ui.spacing_mut().item_spacing = Vec2::new(4.0, 6.0);
         ui.spacing_mut().slider_width = COMBO_W - 50.0;
         let soon = aurora_i18n::tr!("ui-weather-coming-soon");

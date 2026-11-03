@@ -283,6 +283,8 @@ pub(super) struct Cx<'a> {
     group: String,
     /// The search or modified view still has to title the current group.
     group_untitled: bool,
+    /// The next group's title is drawn in the aurora gradient (`aurora_group`).
+    aurora_title: bool,
     /// The last row declared: the parent of the `subs` that follow, and
     /// whether they show without a cog (`unfolded`).
     last: Option<(egui::Id, String, bool)>,
@@ -351,6 +353,7 @@ impl<'a> Cx<'a> {
             tab: 0,
             group: String::new(),
             group_untitled: false,
+            aurora_title: false,
             last: None,
             parent: None,
             next: Next::default(),
@@ -461,6 +464,15 @@ impl<'a> Cx<'a> {
         self.pick = None;
         self.last = None;
         self.parent = None;
+    }
+
+    /// A [`group`](Self::group) of something Aurora's own, that the Legacy
+    /// Viewer and the others do not have: its title in the aurora gradient,
+    /// as Preferences › Aurora's entry.
+    pub fn aurora_group(&mut self, title: &str, body: impl FnOnce(&mut Self)) {
+        self.aurora_title = true;
+        self.group(title, body);
+        self.aurora_title = false;
     }
 
     /// A titled group of rows: a small-caps title and its line, then the
@@ -855,7 +867,13 @@ impl<'a> Cx<'a> {
     fn group_title(&mut self, title: &str) {
         let p = self.p;
         let font = egui::FontId::new(11.0, crate::ui::fonts::semibold(self.ui.ctx()));
-        let galley = self.ui.painter().layout_no_wrap(title.to_uppercase(), font, p.muted);
+        let galley = if std::mem::take(&mut self.aurora_title) {
+            self.ui
+                .painter()
+                .layout_job(super::pages::aurora::aurora_text(&p, &title.to_uppercase(), font))
+        } else {
+            self.ui.painter().layout_no_wrap(title.to_uppercase(), font, p.muted)
+        };
         let (rect, _) = self.ui.allocate_exact_size(vec2(self.ui.available_width(), 26.0), Sense::hover());
         let text_left = rect.left() + 4.0;
         crate::ui::widgets::paint_row_text(self.ui.painter(), galley.clone(), text_left, rect.center().y, p.muted);

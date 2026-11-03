@@ -12919,6 +12919,7 @@ ui-options-camera-vr-view-desktop-camera = カメラの位置
 app-vr-leave = { $key } キーでデスクトップモードに戻ります
 
 ui-weather = 天気
+ui-weather-aurora = Aurora の天気
 ui-weather-coming-soon = 近日対応
 ui-weather-precipitation = 降るもの
 ui-weather-precipitation-tip = 空から降るもの（自分の表示のみ）

@@ -119,7 +119,7 @@ fn share(ui: &mut egui::Ui, v: &mut f32) -> bool {
 fn weather(cx: &mut Cx) {
     use crate::weather::{PUDDLE_DISTANCE, Precipitation, WeatherQuality};
     use aurora_i18n::tr;
-    cx.group(tr!("ui-weather"), |cx| {
+    cx.aurora_group(tr!("ui-weather-aurora"), |cx| {
         cx.choice(
             tr!("ui-weather-precipitation"),
             tr!("ui-weather-precipitation-tip"),

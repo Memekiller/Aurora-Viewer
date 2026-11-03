@@ -12932,6 +12932,7 @@ ui-options-camera-vr-view-desktop-camera = Position de la caméra
 app-vr-leave = Appuyez sur { $key } pour revenir au mode bureau
 
 ui-weather = Météo
+ui-weather-aurora = Météo Aurora
 ui-weather-coming-soon = Bientôt disponible
 ui-weather-precipitation = Précipitations
 ui-weather-precipitation-tip = Ce qui tombe du ciel, pour votre vue seulement

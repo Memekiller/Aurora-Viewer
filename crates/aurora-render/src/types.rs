@@ -1632,19 +1632,22 @@ pub enum GpuElement {
     Water,
     /// Blended faces and particles.
     Transparent,
+    /// Rain prototype: the drops and the wet ground.
+    Weather,
     /// Glow, TAA, tone mapping, SMAA.
     Post,
 }
 
 impl GpuElement {
     /// In frame order.
-    pub const ALL: [GpuElement; 7] = [
+    pub const ALL: [GpuElement; 8] = [
         GpuElement::ShadowsDepth,
         GpuElement::Effects,
         GpuElement::TerrainSky,
         GpuElement::Objects,
         GpuElement::Water,
         GpuElement::Transparent,
+        GpuElement::Weather,
         GpuElement::Post,
     ];
 
@@ -1657,6 +1660,7 @@ impl GpuElement {
             GpuElement::Objects => "objects",
             GpuElement::Water => "water",
             GpuElement::Transparent => "transparent",
+            GpuElement::Weather => "weather",
             GpuElement::Post => "post",
         }
     }

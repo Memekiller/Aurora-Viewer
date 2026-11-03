@@ -1026,6 +1026,7 @@ const COMPARE_KEYS: [&str; 3 + GpuElement::ALL.len()] = [
     "objects",
     "water",
     "transparent",
+    "weather",
     "post",
     "depth",
     "depth_msaa",
@@ -1063,7 +1064,7 @@ impl PrepassCompare {
 
 /// Timestamps of a frame: 0 first pass, 1 end of post / HUDs, then the marks.
 const GPU_TIMESTAMPS: u32 = 2 + GPU_MARKS;
-const GPU_MARKS: u32 = 25;
+const GPU_MARKS: u32 = 28;
 /// Mark indices, in frame order. Those inside the scene passes split them
 /// by draw group; a timestamp there waits for the draws before it, so the
 /// split is close but not exact (the GPU overlaps neighbouring draws).
@@ -1125,6 +1126,11 @@ const MARK_CONTACT_END: u32 = 23;
 const MARK_WATER_INTERFACE_END: u32 = 24;
 const MARK_WATER_AIR_BEGIN: u32 = 25;
 const MARK_WATER_AIR_END: u32 = 26;
+/// Rain prototype, inside scene pass B: before the wet ground (which ends
+/// at `MARK_SSR_END`), and around the drops.
+const MARK_WET_BEGIN: u32 = 27;
+const MARK_RAIN_BEGIN: u32 = 28;
+const MARK_RAIN_END: u32 = 29;
 /// The effects beyond the occlusion and the contact shadows
 /// (`RenderStats::gpu_effects`): the planar reflections (water, mirror), with
 /// the refracted water light before them; the reflection probe face with its
@@ -1134,7 +1140,7 @@ const GPU_EFFECT_PARTS: [(u32, u32); 4] = [
     (MARK_CONTACT_END, MARK_WATER_AIR_BEGIN),
     (MARK_WATER_AIR_END, MARK_REFL_END),
     (MARK_SCENE_A_END, MARK_COPY_END),
-    (MARK_COPY_END, MARK_SSR_END),
+    (MARK_COPY_END, MARK_WET_BEGIN),
 ];
 /// GPU time ranges `(from, to)` of each kind of element, in
 /// [`GpuElement::ALL`] order; together they cover the whole frame.
@@ -1147,7 +1153,7 @@ const GPU_ELEMENTS: [&[(u32, u32)]; GpuElement::ALL.len()] = [
         (MARK_SSAO_END, MARK_WATER_AIR_BEGIN),
         (MARK_WATER_AIR_END, MARK_REFL_END),
         (MARK_SCENE_A_END, MARK_COPY_END),
-        (MARK_COPY_END, MARK_SSR_END),
+        (MARK_COPY_END, MARK_WET_BEGIN),
     ],
     // terrain and sky
     &[(MARK_DEPTH_MSAA_END, MARK_SKY_END), (MARK_SKY_END, MARK_TERRAIN_END)],
@@ -1164,7 +1170,13 @@ const GPU_ELEMENTS: [&[(u32, u32)]; GpuElement::ALL.len()] = [
         (MARK_SSR_END, MARK_WATER_END),
     ],
     // blended faces and particles
-    &[(MARK_GLOW_END, MARK_BLEND_END), (MARK_BLEND_END, MARK_SCENE_END)],
+    &[
+        (MARK_GLOW_END, MARK_BLEND_END),
+        (MARK_BLEND_END, MARK_RAIN_BEGIN),
+        (MARK_RAIN_END, MARK_SCENE_END),
+    ],
+    // weather (rain prototype): the wet ground, the drops
+    &[(MARK_WET_BEGIN, MARK_SSR_END), (MARK_RAIN_BEGIN, MARK_RAIN_END)],
     // post: glow, TAA, tonemap, SMAA and screen-space HUDs
     &[(MARK_WATER_END, MARK_GLOW_END), (MARK_SCENE_END, 1)],
 ];
@@ -7865,10 +7877,12 @@ impl Backend {
                 pass.set_pipeline(&self.pipelines.water_particles);
                 pass.draw(0..crate::water_effects::WATER_PARTICLE_VERTICES, 0..water_particles);
             }
+            pass_mark(pass, MARK_RAIN_BEGIN);
             if rain_drops > 0 {
                 pass.set_pipeline(&self.pipelines.rain);
                 pass.draw(0..6, 0..rain_drops);
             }
+            pass_mark(pass, MARK_RAIN_END);
             // particles last: they rebind vertex buffer 0
             if n_particles > 0 {
                 pass.set_pipeline(&self.pipelines.particles);
@@ -7886,6 +7900,7 @@ impl Backend {
             }
             // rain prototype: wet ground and puddles, under the transparent
             // things drawn after
+            pass_mark(&mut pass, MARK_WET_BEGIN);
             if rain_drops > 0 {
                 match (&self.pipelines.rain_wet_g, &self.gbuf_group) {
                     (Some(pipe), Some(gbg)) => {

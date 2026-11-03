@@ -2020,7 +2020,7 @@ fn rain_off_ground(world: vec3<f32>, p: vec3<f32>) -> bool {
 // (grass, soil, cloth: water soaks in, darker and barely shinier), after
 // Lagarde's wet surfaces; `level_only`: the facing is only known per
 // triangle, so only near-level ground is drawn wet (no facets on avatars).
-fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f32>, porosity: f32, level_only: bool) -> vec4<f32> {
+fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f32>, porosity: f32, level_only: bool, build_level: f32) -> vec4<f32> {
     let cam = frame.camera_pos.xyz;
     let dist = distance(world, cam);
     let area = rain_area_shape(uv, world);
@@ -2047,18 +2047,19 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
     var puddle = 0.0;
     let terrain = rain_terrain(world.xy);
     if (terrain > -1e8 && abs(world.z - terrain) < 0.12) {
-        // on the terrain: the water fills its dips, from the heightmap (the
-        // noise only frays the edges); a drizzle leaves it in the deepest,
-        // a downpour spreads it over the flat ground too
+        // on the terrain: the blobs of the builds' puddles, moved by the
+        // heightmap: a dip fills sooner (2 cm deeper counts as much as a
+        // tenth of the pattern), a hump later, steep ground never
         let ts = rain_terrain_shape(world.xy, terrain);
-        let fill = mix(0.09, -0.01, sqrt(heavy));
+        let pool_level = mix(0.78, 0.53, sqrt(heavy));
         let flat_ground = 1.0 - smoothstep(0.12, 0.25, ts.y);
-        puddle = smoothstep(fill, fill + 0.025, ts.x + (shape - 0.5) * 0.05) * flat_ground;
+        puddle = smoothstep(pool_level, pool_level + 0.05, shape + clamp(ts.x * 5.0, -0.3, 0.3)) * flat_ground;
     } else {
         // on a build (a floor, a road, a roof): the screen's rules
         let pool_level = mix(0.78, 0.53, sqrt(heavy));
         let dip = clamp(-area.w * 4.0, 0.0, 0.15);
-        let flat_area = smoothstep(0.95, 0.98, area.z) * select(0.0, 1.0, smooth_area) * (1.0 - smoothstep(0.0, 0.02, area.w));
+        let flat_area = smoothstep(0.95, 0.98, area.z) * select(0.0, 1.0, smooth_area) * (1.0 - smoothstep(0.0, 0.02, area.w))
+            * smoothstep(0.985, 0.996, build_level);
         puddle = smoothstep(pool_level, pool_level + 0.05, shape + dip) * flat_area;
     }
 
@@ -2119,7 +2120,7 @@ fn fs_rain_wet(in: RainWetOut) -> @location(0) vec4<f32> {
     if (depth <= 0.0) { discard; }
     let world = world_from_depth(uv, depth);
     if (world.z < frame.params.y) { discard; }
-    let out = rain_wet_surface(in.clip.xy, uv, world, rain_depth_normal(uv, world), 0.6, true);
+    let out = rain_wet_surface(in.clip.xy, uv, world, rain_depth_normal(uv, world), 0.6, true, 1.0);
     if (out.a < 0.01) { discard; }
     return out;
 }
@@ -2140,6 +2141,32 @@ fn rain_oct_decode(e_in: vec2<f32>) -> vec3<f32> {
     return normalize(n);
 }
 
+// How level a build is all around a point: the least upward of the smooth
+// facings (G-buffer) at the point and at eight points about 15 and 30 cm
+// around it. A floor faces up everywhere; a log, a rock's top or a mound
+// curves away within a few centimetres. Points on something standing on
+// the floor (much higher or lower) are left out, as in `rain_area_shape`.
+fn rain_build_level(uv: vec2<f32>, world: vec3<f32>, n: vec3<f32>) -> f32 {
+    let dist = max(distance(world, frame.camera_pos.xyz), 0.5);
+    let r = clamp(0.3 * frame.screen.y / (1.15 * dist), 2.0, 40.0);
+    var level = n.z;
+    for (var k = 0; k < 8; k++) {
+        let a = f32(k) * 0.7853982;
+        let reach = select(r, r * 0.5, (k & 1) == 1);
+        let at = uv + vec2<f32>(cos(a), sin(a)) * reach * frame.screen.zw;
+        let d = scene_depth_at(at);
+        if (d <= 0.0) { continue; }
+        let p = world_from_depth(at, d);
+        if (rain_off_ground(world, p)) { continue; }
+        let g = textureLoad(rain_gbuf, vec2<i32>(at * frame.screen.xy), 0);
+        if (abs(g.x - 0.5) < 0.004 && abs(g.y - 0.5) < 0.004 && g.z > 0.996 && g.w < 0.004) { continue; }
+        var gn = rain_oct_decode(g.xy);
+        if (dot(gn, frame.camera_pos.xyz - p) < 0.0) { gn = -gn; }
+        level = min(level, gn.z);
+    }
+    return level;
+}
+
 @fragment
 fn fs_rain_wet_g(in: RainWetOut) -> @location(0) vec4<f32> {
     let uv = screen_uv(in.clip.xy);
@@ -2151,13 +2178,13 @@ fn fs_rain_wet_g(in: RainWetOut) -> @location(0) vec4<f32> {
     let cleared = abs(g.x - 0.5) < 0.004 && abs(g.y - 0.5) < 0.004 && g.z > 0.996 && g.w < 0.004;
     var out: vec4<f32>;
     if (cleared) {
-        out = rain_wet_surface(in.clip.xy, uv, world, rain_depth_normal(uv, world), 0.6, true);
+        out = rain_wet_surface(in.clip.xy, uv, world, rain_depth_normal(uv, world), 0.6, true, 1.0);
     } else {
         var n = rain_oct_decode(g.xy);
         if (dot(n, frame.camera_pos.xyz - world) < 0.0) { n = -n; }
         // rough reads as porous; metal never soaks anything up
         let porosity = clamp((g.z - 0.15) / 0.7, 0.0, 1.0) * (1.0 - g.w);
-        out = rain_wet_surface(in.clip.xy, uv, world, n, porosity, false);
+        out = rain_wet_surface(in.clip.xy, uv, world, n, porosity, false, rain_build_level(uv, world, n));
     }
     if (out.a < 0.01) { discard; }
     return out;

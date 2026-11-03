@@ -2280,11 +2280,15 @@ fn rain_oct_decode(e_in: vec2<f32>) -> vec3<f32> {
 fn rain_build_level(uv: vec2<f32>, world: vec3<f32>, n: vec3<f32>) -> f32 {
     let dist = max(distance(world, frame.camera_pos.xyz), 0.5);
     let r = clamp(0.3 * frame.screen.y / (1.15 * dist), 2.0, 40.0);
-    // the mean of the facings around, not the least level of them: a
-    // normal map's bevels (the edges of every tile, glyph and plank) tilt
-    // this way and that and cancel out, a curved build's (a log) do not;
-    // water lies flat on the surface, whatever its texture shows
-    var sum = n;
+    // the median of the facings around (how level), not the least level
+    // nor the mean: a normal map's bevels (the edges of every tile, glyph
+    // and plank) catch a sample or two here and there, and either would
+    // stamp copies of the pattern, offset by the samples' reach, into the
+    // puddles; a curved build (a log) tilts most of them. Water lies flat
+    // on the surface, whatever its texture shows.
+    var zs: array<f32, 9>;
+    zs[0] = n.z;
+    var count = 1;
     for (var k = 0; k < 8; k++) {
         let a = f32(k) * 0.7853982;
         let reach = select(r, r * 0.5, (k & 1) == 1);
@@ -2297,9 +2301,16 @@ fn rain_build_level(uv: vec2<f32>, world: vec3<f32>, n: vec3<f32>) -> f32 {
         if (abs(g.x - 0.5) < 0.004 && abs(g.y - 0.5) < 0.004 && g.z > 0.996 && g.w < 0.004) { continue; }
         var gn = rain_oct_decode(g.xy);
         if (dot(gn, frame.camera_pos.xyz - p) < 0.0) { gn = -gn; }
-        sum += gn;
+        // insert, keeping them sorted
+        var j = count;
+        while (j > 0 && zs[j - 1] > gn.z) {
+            zs[j] = zs[j - 1];
+            j--;
+        }
+        zs[j] = gn.z;
+        count++;
     }
-    return normalize(sum).z;
+    return zs[count / 2];
 }
 
 @fragment

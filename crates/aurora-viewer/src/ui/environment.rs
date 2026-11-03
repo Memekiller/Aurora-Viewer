@@ -687,6 +687,22 @@ fn row_label(ui: &mut egui::Ui, p: &Palette, text: &str, tip: &str) {
     resp.on_hover_text(tip);
 }
 
+/// The compass point nearest `degrees` (clockwise from north).
+fn compass_point(degrees: f32) -> String {
+    let i = ((degrees.rem_euclid(360.0) + 22.5) / 45.0) as usize % 8;
+    match i {
+        0 => aurora_i18n::tr!("ui-weather-compass-n"),
+        1 => aurora_i18n::tr!("ui-weather-compass-ne"),
+        2 => aurora_i18n::tr!("ui-weather-compass-e"),
+        3 => aurora_i18n::tr!("ui-weather-compass-se"),
+        4 => aurora_i18n::tr!("ui-weather-compass-s"),
+        5 => aurora_i18n::tr!("ui-weather-compass-sw"),
+        6 => aurora_i18n::tr!("ui-weather-compass-w"),
+        _ => aurora_i18n::tr!("ui-weather-compass-nw"),
+    }
+    .to_string()
+}
+
 /// "Weather": the rain (and later snow, wind, thunder) of this viewer only,
 /// folded away until opened. The controls not working yet are greyed out.
 fn weather_section(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
@@ -697,7 +713,12 @@ fn weather_section(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
         let soon = aurora_i18n::tr!("ui-weather-coming-soon");
         // what falls
         ui.horizontal(|ui| {
-            row_label(ui, p, &aurora_i18n::tr!("ui-weather-precipitation"), &aurora_i18n::tr!("ui-weather-precipitation-tip"));
+            row_label(
+                ui,
+                p,
+                &aurora_i18n::tr!("ui-weather-precipitation"),
+                &aurora_i18n::tr!("ui-weather-precipitation-tip"),
+            );
             let rain = aurora_i18n::tr!("ui-weather-rain");
             let snow = aurora_i18n::tr!("ui-weather-snow");
             let mut i = match w.precipitation {
@@ -713,38 +734,107 @@ fn weather_section(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
         });
         // how much
         ui.horizontal(|ui| {
-            row_label(ui, p, &aurora_i18n::tr!("ui-weather-amount"), &aurora_i18n::tr!("ui-weather-amount-tip"));
+            row_label(
+                ui,
+                p,
+                &aurora_i18n::tr!("ui-weather-amount"),
+                &aurora_i18n::tr!("ui-weather-amount-tip"),
+            );
             let mut amount = w.rain_or_amount();
             if ui.add(egui::Slider::new(&mut amount, 0.0..=1.0).show_value(false)).changed() {
                 w.amount = amount;
             }
         });
-        // the wind, in gusts
+        // the wind, wandering between its lulls and its gusts; dragging one
+        // past the other takes it along
         ui.horizontal(|ui| {
-            row_label(ui, p, &aurora_i18n::tr!("ui-weather-wind"), &aurora_i18n::tr!("ui-weather-wind-tip"));
-            ui.add(egui::Slider::new(&mut w.wind, 0.0..=1.0).show_value(false));
+            row_label(
+                ui,
+                p,
+                &aurora_i18n::tr!("ui-weather-wind"),
+                &aurora_i18n::tr!("ui-weather-wind-tip"),
+            );
+            if ui.add(egui::Slider::new(&mut w.wind_min, 0.0..=1.0).show_value(false)).changed() {
+                w.wind_max = w.wind_max.max(w.wind_min);
+            }
+        });
+        ui.horizontal(|ui| {
+            row_label(
+                ui,
+                p,
+                &aurora_i18n::tr!("ui-weather-gusts"),
+                &aurora_i18n::tr!("ui-weather-gusts-tip"),
+            );
+            if ui.add(egui::Slider::new(&mut w.wind_max, 0.0..=1.0).show_value(false)).changed() {
+                w.wind_min = w.wind_min.min(w.wind_max);
+            }
+        });
+        // where it comes from: the region's way, or a compass direction
+        ui.horizontal(|ui| {
+            row_label(
+                ui,
+                p,
+                &aurora_i18n::tr!("ui-weather-wind-from"),
+                &aurora_i18n::tr!("ui-weather-wind-from-tip"),
+            );
+            widgets::checkbox(ui, p, &mut w.wind_follow_region, aurora_i18n::tr!("ui-weather-wind-region"));
+            ui.add_enabled_ui(!w.wind_follow_region, |ui| {
+                ui.spacing_mut().slider_width = COMBO_W - 140.0;
+                ui.add(
+                    egui::Slider::new(&mut w.wind_from, 0.0..=355.0)
+                        .step_by(5.0)
+                        .custom_formatter(|v, _| format!("{v:.0}° {}", compass_point(v as f32)))
+                        .custom_parser(|t| t.trim().trim_end_matches(|c: char| !c.is_ascii_digit()).parse().ok()),
+                );
+            });
         });
         // the puddles and how far the wet ground goes
         ui.horizontal(|ui| {
-            row_label(ui, p, &aurora_i18n::tr!("ui-weather-puddles"), &aurora_i18n::tr!("ui-weather-puddles-tip"));
+            row_label(
+                ui,
+                p,
+                &aurora_i18n::tr!("ui-weather-puddles"),
+                &aurora_i18n::tr!("ui-weather-puddles-tip"),
+            );
             widgets::checkbox(ui, p, &mut w.puddles, "");
         });
         ui.horizontal(|ui| {
-            row_label(ui, p, &aurora_i18n::tr!("ui-weather-distance"), &aurora_i18n::tr!("ui-weather-distance-tip"));
-            ui.add(
-                egui::Slider::new(&mut w.puddle_distance, PUDDLE_DISTANCE)
-                    .step_by(1.0)
-                    .suffix(" m"),
+            row_label(
+                ui,
+                p,
+                &aurora_i18n::tr!("ui-weather-distance"),
+                &aurora_i18n::tr!("ui-weather-distance-tip"),
             );
+            ui.add(egui::Slider::new(&mut w.puddle_distance, PUDDLE_DISTANCE).step_by(1.0).suffix(" m"));
         });
         // thunder and lightning, in heavy rain
         ui.horizontal(|ui| {
-            row_label(ui, p, &aurora_i18n::tr!("ui-weather-thunder"), &aurora_i18n::tr!("ui-weather-thunder-tip"));
+            row_label(
+                ui,
+                p,
+                &aurora_i18n::tr!("ui-weather-thunder"),
+                &aurora_i18n::tr!("ui-weather-thunder-tip"),
+            );
             widgets::checkbox(ui, p, &mut w.thunder, "");
+        });
+        // how often it strikes
+        ui.horizontal(|ui| {
+            row_label(
+                ui,
+                p,
+                &aurora_i18n::tr!("ui-weather-strikes"),
+                &aurora_i18n::tr!("ui-weather-strikes-tip"),
+            );
+            ui.add_enabled(w.thunder, egui::Slider::new(&mut w.thunder_frequency, 0.0..=1.0).show_value(false));
         });
         // quality (not yet)
         ui.horizontal(|ui| {
-            row_label(ui, p, &aurora_i18n::tr!("ui-weather-quality"), &aurora_i18n::tr!("ui-weather-quality-tip"));
+            row_label(
+                ui,
+                p,
+                &aurora_i18n::tr!("ui-weather-quality"),
+                &aurora_i18n::tr!("ui-weather-quality-tip"),
+            );
             let low = aurora_i18n::tr!("ui-weather-quality-low");
             let medium = aurora_i18n::tr!("ui-weather-quality-medium");
             let high = aurora_i18n::tr!("ui-weather-quality-high");

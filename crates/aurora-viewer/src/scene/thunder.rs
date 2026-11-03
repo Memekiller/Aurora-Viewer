@@ -1,15 +1,19 @@
 //! Weather: thunder and lightning in heavy rain, for this viewer only.
 //!
-//! Strikes come at random, the more often the harder it rains, each at a
-//! random distance (300 m to 6 km, the far ones more often) and direction.
-//! Its flash is at once: two to four strokes in a fraction of a second
-//! (`flash`, which the app turns into light). Its thunder comes as late as
+//! Strikes come at random, the more often the harder it rains (and the
+//! Strikes setting), each at a random distance (300 m to 6 km, the far ones
+//! more often) and direction. Its flash is at once: two to four strokes in a
+//! fraction of a second (`flash`, which the app turns into light), and for
+//! all but the farthest a bolt in the sky, a new one each time (`bolts`:
+//! the main channel jagged by midpoint displacement, with a few forks lit by
+//! the first stroke only). Its thunder comes as late as
 //! sound takes to cover the distance (3 s a kilometre), from its side: a
 //! near strike cracks, a far one rolls, quieter and duller (the air takes
 //! the highs out first); under a roof all of it is softer and muffled.
 
 use super::sound_reverb::Sky;
 use aurora_audio::{AudioEngine, Channel, SoundClip};
+use aurora_render::{ParticleInstance, particle_flags};
 use glam::{Vec2, Vec3};
 use std::sync::{Once, OnceLock};
 use std::time::{Duration, Instant};
@@ -31,6 +35,10 @@ const MIN_RAIN: f32 = 0.4;
 /// Strikes' distances (m).
 const NEAREST: f32 = 300.0;
 const FARTHEST: f32 = 6000.0;
+/// Beyond this a strike is only a glow of the clouds, no bolt seen (m).
+const BOLT_FARTHEST: f32 = 4500.0;
+/// The shortest wait between two strikes (s).
+const SHORTEST_WAIT: f32 = 2.0;
 
 /// Which recording: the near ones crack, the far ones roll.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,6 +86,8 @@ pub struct ThunderInput {
     pub enabled: bool,
     /// How hard it rains (0..1).
     pub rain: f32,
+    /// The Strikes setting, 0 (seldom) to 1 (often).
+    pub frequency: f32,
     /// Where the listener looks (for the panning).
     pub forward: Vec3,
     /// The sky around the listener, when measured (softer under a roof).
@@ -88,11 +98,33 @@ pub struct ThunderInput {
     pub audible: bool,
 }
 
-/// One strike's flash: its strokes (when after the strike, how bright).
+/// One strike's flash: its strokes (when after the strike, how bright),
+/// and the bolt seen, if any.
 #[derive(Debug, Clone)]
 struct Flash {
     at: Instant,
     strokes: Vec<(f32, f32)>,
+    bolt: Option<Bolt>,
+}
+
+/// One segment of a bolt, in the strike's own frame (m): x across the view,
+/// y away from the viewer, z up from the ground under the strike.
+#[derive(Debug, Clone, Copy)]
+struct Segment {
+    a: Vec3,
+    b: Vec3,
+    /// Of the main channel's width and brightness.
+    weight: f32,
+    /// Lit by the first stroke only (a fork).
+    fork: bool,
+}
+
+/// A bolt: where it is (direction from the viewer, distance) and its shape.
+#[derive(Debug, Clone)]
+struct Bolt {
+    from: Vec2,
+    distance: f32,
+    segments: Vec<Segment>,
 }
 
 /// One strike's thunder, on its way.
@@ -144,11 +176,76 @@ impl Thunder {
         (self.seed >> 40) as f32 / (1u64 << 24) as f32
     }
 
+    /// -1..1, uniform.
+    fn signed(&mut self) -> f32 {
+        self.rand() * 2.0 - 1.0
+    }
+
     /// The mean time between strikes for a rain of `rain` (s): a minute
-    /// and more in moderate rain, about ten seconds in a downpour.
-    fn mean_interval(rain: f32) -> f32 {
+    /// and more in moderate rain, about ten seconds in a downpour, at the
+    /// middle Strikes setting; four times rarer to four times more often at
+    /// its ends.
+    fn mean_interval(rain: f32, frequency: f32) -> f32 {
         let t = ((rain - MIN_RAIN) / (1.0 - MIN_RAIN)).clamp(0.0, 1.0);
-        70.0 * (10.0f32 / 70.0).powf(t)
+        let f = frequency.clamp(0.0, 1.0);
+        70.0 * (10.0f32 / 70.0).powf(t) * 4.0f32.powf(1.0 - 2.0 * f)
+    }
+
+    /// A jagged path from `a` to `b`: each segment's middle pushed sideways
+    /// by a share of its length, `depth` times over (2^depth segments).
+    fn jagged(&mut self, a: Vec3, b: Vec3, depth: u32, rough: f32) -> Vec<Vec3> {
+        let mut pts = vec![a, b];
+        for _ in 0..depth {
+            let mut next = Vec::with_capacity(pts.len() * 2);
+            for w in pts.windows(2) {
+                let (p, q) = (w[0], w[1]);
+                let len = p.distance(q);
+                // sideways mostly across the view, less in depth and height
+                let push = Vec3::new(self.signed(), self.signed() * 0.6, self.signed() * 0.25) * len * rough;
+                next.push(p);
+                next.push((p + q) * 0.5 + push);
+            }
+            next.push(*pts.last().expect("never empty"));
+            pts = next;
+        }
+        pts
+    }
+
+    /// A new bolt: from the cloud base (1.2 to 2 km) down to the ground,
+    /// with two to five forks from its upper part.
+    fn bolt(&mut self, from: Vec2, distance: f32) -> Bolt {
+        let top = Vec3::new(self.signed() * 150.0, self.signed() * 100.0, 1200.0 + self.rand() * 800.0);
+        let ground = Vec3::new(self.signed() * 200.0, 0.0, 0.0);
+        let main = self.jagged(top, ground, 6, 0.22);
+        let mut segments: Vec<Segment> = main
+            .windows(2)
+            .map(|w| Segment {
+                a: w[0],
+                b: w[1],
+                weight: 1.0,
+                fork: false,
+            })
+            .collect();
+        let forks = 2 + (self.rand() * 3.99) as usize;
+        for _ in 0..forks {
+            // from somewhere on the upper two thirds, down and outward
+            let i = (self.rand() * main.len() as f32 * 0.66) as usize;
+            let start = main[i.min(main.len() - 1)];
+            let length = top.z * (0.15 + self.rand() * 0.3);
+            let out = Vec3::new(self.signed(), self.signed() * 0.5, -(0.8 + self.rand() * 0.8)).normalize_or(-Vec3::Z);
+            let end = start + out * length;
+            let end = Vec3::new(end.x, end.y, end.z.max(0.0));
+            let path = self.jagged(start, end, 4, 0.25);
+            let n = path.len() - 1;
+            segments.extend(path.windows(2).enumerate().map(|(k, w)| Segment {
+                a: w[0],
+                b: w[1],
+                // thinner toward its tip
+                weight: 0.55 * (1.0 - 0.7 * k as f32 / n as f32),
+                fork: true,
+            }));
+        }
+        Bolt { from, distance, segments }
     }
 
     /// A strike now, at `distance` m (random when None).
@@ -166,7 +263,8 @@ impl Thunder {
             strokes.push((t, amp * bright));
             t += 0.04 + self.rand() * 0.14;
         }
-        self.flashes.push(Flash { at: now, strokes });
+        let bolt = (d <= BOLT_FARTHEST && self.rand() < 0.85).then(|| self.bolt(from, d));
+        self.flashes.push(Flash { at: now, strokes, bolt });
         // the thunder: a crack near, a roll farther, the far roll far off;
         // quieter and duller with the distance
         let r = self.rand();
@@ -198,8 +296,8 @@ impl Thunder {
             let _ = clips();
             match self.next {
                 None => {
-                    let wait = -self.rand().max(1e-4).ln() * Self::mean_interval(input.rain);
-                    self.next = Some(now + Duration::from_secs_f32(wait.clamp(4.0, 240.0)));
+                    let wait = -self.rand().max(1e-4).ln() * Self::mean_interval(input.rain, input.frequency);
+                    self.next = Some(now + Duration::from_secs_f32(wait.clamp(SHORTEST_WAIT, 480.0)));
                 }
                 Some(t) if now >= t => {
                     self.next = None;
@@ -261,6 +359,74 @@ impl Thunder {
             }
         }
     }
+    /// The bolts seen now, as glowing ribbon segments for the particle pass:
+    /// `eye` the camera, `ground` the height of the ground far off (m),
+    /// `reach` how far the frame draws (m). A bolt farther than that is
+    /// drawn nearer at the same size in the view, so that it stands in the
+    /// sky where it struck.
+    pub fn bolts(&self, now: Instant, eye: Vec3, ground: f32, reach: f32, out: &mut Vec<ParticleInstance>) {
+        for f in &self.flashes {
+            let Some(bolt) = &f.bolt else {
+                continue;
+            };
+            let t = now.saturating_duration_since(f.at).as_secs_f32();
+            // each stroke lights the channel at once and it fades in a few
+            // hundredths of a second, with a faint afterglow; the forks only
+            // with the first
+            let (mut main, mut fork) = (0.0f32, 0.0f32);
+            for (i, &(at, amp)) in f.strokes.iter().enumerate() {
+                if t >= at {
+                    let k = t - at;
+                    let lit = (amp / f.strokes[0].1.max(1e-3)) * ((-k / 0.045).exp() + 0.15 * (-k / 0.25).exp());
+                    main += lit;
+                    if i == 0 {
+                        fork += lit;
+                    }
+                }
+            }
+            if main < 0.02 {
+                continue;
+            }
+            let scale = (reach * 0.85).min(bolt.distance) / bolt.distance;
+            let across = bolt.from.perp();
+            let base = Vec3::new(eye.x + bolt.from.x * bolt.distance, eye.y + bolt.from.y * bolt.distance, ground);
+            let place = |p: Vec3| {
+                let w = base + (across * p.x + bolt.from * p.y).extend(p.z);
+                eye + (w - eye) * scale
+            };
+            // a few metres wide where it struck, whatever the distance
+            let width = (2.0 + bolt.distance * 0.0025) * scale;
+            for s in &bolt.segments {
+                let lit = if s.fork { fork } else { main } * s.weight;
+                if lit < 0.02 {
+                    continue;
+                }
+                let (a, b) = (place(s.a), place(s.b));
+                // each quad half again as long as its segment, so that the
+                // soft ends of neighbours overlap into one line
+                let axis = (b - a) * 2.5;
+                let mid = (a + b) * 0.5;
+                let core = ParticleInstance {
+                    pos: mid.to_array(),
+                    texture: 0,
+                    size: [width * s.weight.max(0.35), axis.length()],
+                    flags: particle_flags::EMISSIVE | particle_flags::ADDITIVE | particle_flags::AXIS,
+                    color: [235, 238, 255, (lit.min(1.0) * 255.0) as u8],
+                    axis: axis.to_array(),
+                    glow: 2.0 * lit,
+                };
+                // and a wide violet-blue halo around it
+                let halo = ParticleInstance {
+                    size: [width * 7.0 * s.weight.max(0.35), axis.length()],
+                    color: [150, 160, 255, (lit.min(1.0) * 90.0) as u8],
+                    glow: 0.5 * lit,
+                    ..core
+                };
+                out.push(halo);
+                out.push(core);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -272,6 +438,7 @@ mod tests {
             enabled: true,
             rain,
             forward: Vec3::X,
+            frequency: 0.5,
             sky: None,
             underwater: false,
             audible: false,
@@ -296,8 +463,12 @@ mod tests {
 
     #[test]
     fn storms_strike_more_often_in_heavier_rain_and_never_when_off() {
-        assert!(Thunder::mean_interval(1.0) < 15.0);
-        assert!(Thunder::mean_interval(MIN_RAIN) > 60.0);
+        assert!(Thunder::mean_interval(1.0, 0.5) < 15.0);
+        assert!(Thunder::mean_interval(MIN_RAIN, 0.5) > 60.0);
+        // the Strikes setting: four times either way
+        let mid = Thunder::mean_interval(0.7, 0.5);
+        assert!((Thunder::mean_interval(0.7, 0.0) / mid - 4.0).abs() < 1e-3);
+        assert!((Thunder::mean_interval(0.7, 1.0) / mid - 0.25).abs() < 1e-3);
         let t0 = Instant::now();
         let mut th = Thunder::default();
         let mut off = input(1.0);
@@ -314,5 +485,48 @@ mod tests {
             }
         }
         assert!((20..=120).contains(&strikes), "{strikes} in 10 minutes");
+    }
+
+    #[test]
+    fn a_near_bolt_reaches_from_the_clouds_to_the_ground_in_its_direction_then_goes_out() {
+        let t0 = Instant::now();
+        let mut th = Thunder::default();
+        // until one comes with a bolt (most do)
+        let mut tries = 0;
+        while th.flashes.last().is_none_or(|f| f.bolt.is_none()) {
+            th.flashes.clear();
+            th.strike(t0, Some(1000.0));
+            tries += 1;
+            assert!(tries < 50);
+        }
+        let bolt = th.flashes[0].bolt.clone().expect("bolt");
+        // every bolt is new: no two the same
+        let other = th.bolt(bolt.from, 1000.0);
+        assert!(bolt.segments[5].b.distance(other.segments[5].b) > 1e-3);
+        // the main channel is joined end to end, from high up to the ground
+        let main: Vec<_> = bolt.segments.iter().filter(|s| !s.fork).collect();
+        assert_eq!(main.len(), 64);
+        assert!(main.windows(2).all(|w| w[0].b == w[1].a));
+        assert!(main[0].a.z >= 1200.0 && main.last().expect("main").b.z.abs() < 1e-3);
+        assert!(bolt.segments.iter().all(|s| s.a.z >= -50.0 && s.b.z >= -50.0));
+
+        // drawn at once, nearer than the frame's reach, in its direction
+        let eye = Vec3::new(128.0, 128.0, 30.0);
+        let mut out = Vec::new();
+        th.bolts(t0 + Duration::from_millis(5), eye, 20.0, 256.0, &mut out);
+        assert!(!out.is_empty());
+        for i in &out {
+            let p = Vec3::from_array(i.pos);
+            assert!(p.distance(eye) < 256.0, "{p}");
+            assert!((p - eye).truncate().normalize().dot(bolt.from) > 0.7, "{p}");
+            assert_eq!(i.flags & particle_flags::ADDITIVE, particle_flags::ADDITIVE);
+        }
+        // out in a second, and none from a far strike
+        out.clear();
+        th.bolts(t0 + Duration::from_millis(1400), eye, 20.0, 256.0, &mut out);
+        assert!(out.is_empty());
+        let mut far = Thunder::default();
+        far.strike(t0, Some(5500.0));
+        assert!(far.flashes[0].bolt.is_none());
     }
 }

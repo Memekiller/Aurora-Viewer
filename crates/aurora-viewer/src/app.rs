@@ -5185,6 +5185,7 @@ impl App {
         let input = crate::scene::thunder::ThunderInput {
             enabled: self.settings.weather.thunder,
             rain: self.settings.weather.rain(),
+            frequency: self.settings.weather.thunder_frequency,
             forward: (self.camera.target - self.camera.position).normalize_or(Vec3::X),
             sky: self.scene.sound_reverb.sky,
             underwater: self.camera.position.z < self.world.main_water_height(),
@@ -5194,7 +5195,10 @@ impl App {
         // the start (demo captures of the flash)
         static AT: std::sync::OnceLock<Option<(Instant, f32)>> = std::sync::OnceLock::new();
         if let Some((start, s)) = *AT.get_or_init(|| {
-            std::env::var("AURORA_THUNDER_AT").ok().and_then(|v| v.parse().ok()).map(|s| (Instant::now(), s))
+            std::env::var("AURORA_THUNDER_AT")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .map(|s| (Instant::now(), s))
         }) && start.elapsed().as_secs_f32() >= s
             && !self.thunder_demo_done
         {
@@ -5236,9 +5240,11 @@ impl App {
             .map_or(Vec3::ZERO, |r| r.wind.velocity(agent.position, r.heightmap.size_x as f32));
         // the weather's wind: blowing the region's way, in gusts; heard
         // outdoors (walking too, not only flying), faint under cover
-        let strength = self.settings.weather.wind;
-        self.weather_wind.advance(std::time::Instant::now(), strength, region_wind.truncate());
-        let weather_wind = strength > 0.0;
+        let range = self.settings.weather.wind_range();
+        let heading = self.settings.weather.wind_heading();
+        self.weather_wind
+            .advance(std::time::Instant::now(), range, heading, region_wind.truncate());
+        let weather_wind = range.1 > 0.0;
         if weather_wind {
             let open = self.scene.sound_reverb.sky.map_or(1.0, |s| s.exposure.clamp(0.0, 1.0));
             region_wind = self.weather_wind.now.extend(0.0) * (0.15 + 0.85 * open);
@@ -5248,7 +5254,10 @@ impl App {
         let demo_silent = self.demo && std::env::var_os("AURORA_DEMO_SOUND").is_none() && crate::scene::wind_sound::demo_spec().is_none();
         let input = crate::scene::wind_sound::WindInput {
             region_wind,
-            velocity: agent.velocity,
+            // the rush of our own motion through the air is the flying
+            // sound's: on foot, the weather's wind is heard as it blows,
+            // not faster as we walk or run into it
+            velocity: if agent.flying { agent.velocity } else { Vec3::ZERO },
             rotation: agent.body_rotation(),
             audible: matches!(self.screen, Screen::World)
                 && !demo_silent
@@ -9530,6 +9539,14 @@ impl App {
             if self.settings.world_overlays.hide_particles {
                 self.scene.lists.particles.clear();
             }
+            // the lightning's bolts, in the sky (not hidden with the particles)
+            self.thunder.bolts(
+                Instant::now(),
+                self.camera.position,
+                self.world.main_water_height(),
+                self.settings.draw_distance,
+                &mut self.scene.lists.particles,
+            );
             t_part = Instant::now();
         }
         let (lights, spot_shadows) = if in_world {

@@ -2308,3 +2308,87 @@ fn vs_rain_splash(@builtin(vertex_index) vertex: u32, @builtin(instance_index) i
 fn fs_rain_splash(in: RainOut) -> @location(0) vec4<f32> {
     return rain_streak(in, 0.03);
 }
+
+// ------------------------------------------------- distant rain (prototype)
+// Beyond the drops' box, rain as layers instead of more drops (after ATI's
+// ToyShop, Tatarchuk 2006): four cylinders around the camera, 22 to 140 m
+// away, each with long soft streaks, fixed to the compass (they do not swim
+// as the camera turns) and falling straight. Toward the horizon only: looking
+// down or up, the cylinders' vertical lines would converge on screen, and the
+// drops nearby do the work there. A streak is the scene behind it a little
+// lighter (the scene copy), as distant rain is: barely seen against bright
+// fog, more against a dark cliff. A layer is hidden where the scene is
+// nearer than it, fades into the fog, and the nearest keeps out of the
+// shelter; a faint veil per layer stands for the drops too fine to see. One
+// pass, the same cost however hard it rains.
+
+@fragment
+fn fs_rain_far(in: RainWetOut) -> @location(0) vec4<f32> {
+    let heavy = frame.rain.x;
+    if (heavy <= 0.0 || camera_underwater()) { discard; }
+    let uv = screen_uv(in.clip.xy);
+    let cam = frame.camera_pos.xyz;
+    let d = normalize(world_from_depth(uv, 0.5) - cam);
+    let horizon = 1.0 - smoothstep(0.2, 0.4, abs(d.z));
+    if (horizon <= 0.0) { discard; }
+    let flat_len = length(d.xy);
+    // a pixel's angle at the middle of the screen, the same for every pixel:
+    // a layer's columns must keep one width all down the screen, or they
+    // drift sideways and the streaks bend into arcs
+    let mid = normalize(world_from_depth(vec2<f32>(0.5, 0.5), 0.5) - cam);
+    let mid_up = normalize(world_from_depth(vec2<f32>(0.5, 0.5 + frame.screen.w), 0.5) - cam);
+    let pixel = max(length(mid_up - mid), 1e-5);
+    let depth = scene_depth_at(uv);
+    var scene = 1e9;
+    if (depth > 0.0) { scene = distance(world_from_depth(uv, depth), cam); }
+    let behind = textureSampleLevel(scene_tex, lin_clamp, uv, 0.0).rgb;
+    let theta = atan2(d.y, d.x);
+    let time = frame.camera_pos.w;
+    let speed = 7.0;
+
+    var far = array<f32, 4>(22.0, 40.0, 75.0, 140.0);
+    var lift = 0.0;
+    var veil = 0.0;
+    var fog_at = cam;
+    for (var k = 0; k < 4; k++) {
+        let radius = far[k];
+        let t = radius / flat_len;
+        var seen = clamp((scene - t * 0.7) / (t * 0.3), 0.0, 1.0) * horizon;
+        if (seen <= 0.0) { continue; }
+        let p = cam + d * t;
+        if (p.z < frame.params.y) { continue; }
+        if (k == 0) { seen *= 1.0 - rain_sheltered(p); }
+        fog_at = p;
+        // two offset patterns of columns about 7 pixels apart; in some, now
+        // and then, a streak about a pixel wide (soft edged), a few metres
+        // long (seen through more air), each as faint as its own drop
+        let w = pixel * radius;
+        let column = w * 7.0;
+        let streak_len = 0.9 * pow(radius / 22.0, 0.7);
+        for (var s = 0; s < 2; s++) {
+            let u = theta * radius + f32(s) * column * 0.37;
+            let col = floor(u / column);
+            let seed = bitcast<u32>(i32(col)) * 747796405u + u32(k * 2 + s) * 2891336453u + 17u;
+            if (rain_rand(seed + 3u) > heavy * 0.8 + 0.1) { continue; }
+            let centre = (col + 0.15 + rain_rand(seed) * 0.7) * column;
+            let across = 1.0 - smoothstep(w * 0.2, w * 0.9, abs(u - centre));
+            if (across <= 0.0) { continue; }
+            let length_here = streak_len * (0.6 + rain_rand(seed + 4u) * 0.8);
+            let period = length_here * (2.5 + rain_rand(seed + 1u) * 4.0);
+            let at = fract((p.z + time * speed * (1.0 - 0.1 * f32(k))) / period + rain_rand(seed + 2u)) * period;
+            let along = smoothstep(0.0, length_here * 0.3, at) * (1.0 - smoothstep(length_here * 0.5, length_here, at));
+            let faint = 0.3 + rain_rand(seed + 5u) * 0.7;
+            lift += across * along * faint * seen * (0.06 - 0.01 * f32(k));
+        }
+    }
+    // the veil: drops too fine to see, more the farther the surface behind
+    // (smoothly: a step per layer drew an edge where one met the ground)
+    let veil_from = 22.0 / max(flat_len, 0.05);
+    veil = (1.0 - exp(-max(scene - veil_from, 0.0) / 90.0)) * 0.2 * horizon;
+    let a = clamp(lift * pow(heavy, 1.2), 0.0, 0.5) + clamp(veil * heavy * heavy * 1.25, 0.0, 0.25);
+    if (a < 0.002) { discard; }
+    // the rain's own colour: what is behind it lightened toward the sky,
+    // through the fog of where it is
+    let rain = apply_fog(mix(behind, frame.sky_horizon.rgb, 0.25) * 1.12, fog_at);
+    return vec4<f32>(rain * a, a);
+}

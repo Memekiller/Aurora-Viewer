@@ -898,6 +898,8 @@ struct Pipelines {
     rain: wgpu::RenderPipeline,
     /// Rain prototype's splashes (`vs_rain_splash`).
     rain_splash: wgpu::RenderPipeline,
+    /// Rain prototype's distant rain (`fs_rain_far`).
+    rain_far: wgpu::RenderPipeline,
     /// Rain prototype's wet ground and puddles (`fs_rain_wet`).
     rain_wet: wgpu::RenderPipeline,
     /// The same with the screen-space reflections' G-buffer (`fs_rain_wet_g`).
@@ -3660,6 +3662,15 @@ impl Backend {
             depth_compare: wgpu::CompareFunction::Greater,
             ..base("rain splashes", "vs_rain_splash", "fs_rain_splash")
         });
+        let rain_far = pipe(PipeDesc {
+            vb: Vb::None,
+            cull: None,
+            blend: Some(suppress),
+            write_mask: wgpu::ColorWrites::ALL,
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::Always,
+            ..base("distant rain", "vs_rain_wet", "fs_rain_far")
+        });
         let rain_wet = pipe(PipeDesc {
             vb: Vb::None,
             cull: None,
@@ -4180,6 +4191,7 @@ impl Backend {
             rain_wet,
             rain_wet_g,
             rain_splash,
+            rain_far,
             glow,
             glow_water,
             glow_max,
@@ -7933,6 +7945,9 @@ impl Backend {
                 // splashes: 6 droplets of 6 vertices; up to 9,000 places
                 pass.set_pipeline(&self.pipelines.rain_splash);
                 pass.draw(0..36, 0..(f.rain.clamp(0.0, 1.0) * 9_000.0) as u32);
+                // beyond the drops' box: the distant rain's layers
+                pass.set_pipeline(&self.pipelines.rain_far);
+                pass.draw(0..3, 0..1);
             }
             pass_mark(pass, MARK_RAIN_END);
             // particles last: they rebind vertex buffer 0

@@ -666,7 +666,7 @@ fn row_label(ui: &mut egui::Ui, p: &Palette, text: &str, tip: &str) {
 }
 
 /// The compass point nearest `degrees` (clockwise from north).
-fn compass_point(degrees: f32) -> String {
+pub(crate) fn compass_point(degrees: f32) -> String {
     let i = ((degrees.rem_euclid(360.0) + 22.5) / 45.0) as usize % 8;
     match i {
         0 => aurora_i18n::tr!("ui-weather-compass-n"),

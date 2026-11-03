@@ -8,78 +8,13 @@ use super::super::{COMBO_W, preset_choice, stepped, toggle};
 use egui::RichText;
 
 pub fn page(cx: &mut Cx, tab: usize) {
-    use aurora_i18n::tr;
     match tab {
         0 => quality(cx),
         1 => light(cx),
-        2 => cx.group(tr!("common-environment"), |cx| {
-            cx.row(
-                tr!("common-time-of-day"),
-                tr!("ui-options-shared-environment-region-parcel-eep-day-cycle"),
-                &field!(time_of_day),
-                |ui, s| {
-                    let names = crate::ui::bars::time_of_day();
-                    let mut changed = false;
-                    egui::ComboBox::from_id_salt(ui.scope_id().with("tod"))
-                        .width(COMBO_W)
-                        .selected_text(names[s.time_of_day.min(crate::world::env::TIME_OF_DAY_PRESETS) as usize])
-                        .show_ui(ui, |ui| {
-                            for i in std::iter::once(0).chain(crate::world::env::TIME_OF_DAY_ORDER) {
-                                changed |= ui.selectable_value(&mut s.time_of_day, i, names[i as usize]).changed();
-                            }
-                        });
-                    changed
-                },
-            );
-            cx.row(
-                tr!("ui-options-environment-fade"),
-                tr!("ui-options-fade-duration-when-you-change-the-environment-yourself-selector"),
-                &field!(env_manual_transition),
-                |ui, s| {
-                    ui.add(
-                        egui::Slider::new(&mut s.env_manual_transition, 0.0..=60.0)
-                            .custom_parser(aurora_i18n::parse_number)
-                            .step_by(0.5)
-                            .suffix(" s")
-                            .trailing_fill(true),
-                    )
-                    .changed()
-                },
-            );
-            // the stars' sky (world/night_sky.rs)
-            {
-                use crate::world::night_sky::NightSky;
-                cx.unfolded().choice(
-                    tr!("ui-options-night-sky"),
-                    tr!("ui-options-night-sky-help"),
-                    &field!(night_sky),
-                    &[
-                        (NightSky::Real, tr!("ui-options-night-sky-real"), false),
-                        (NightSky::Legacy, tr!("ui-options-night-sky-legacy"), false),
-                    ],
-                );
-                let legacy = cx.s.night_sky != NightSky::Real;
-                cx.subs(legacy, night_sky_rows);
-            }
-            // an Aurora difference, also listed in Preferences › Aurora
-            cx.experimental().toggle(
-                tr!("ui-options-colored-sky-ambient"),
-                tr!("ui-options-colored-sky-ambient-help"),
-                &field!(colored_sky_ambient),
-            );
-            cx.toggle(
-                tr!("ui-options-keep-environment"),
-                tr!("ui-options-restore-the-local-environment-selected-sky-water-and-day"),
-                &field!(env_persist),
-            );
-            // the "ignore" box of SettingsMakeNoTrans (Legacy Viewer:
-            // Preferences › Notifications › Alerts)
-            cx.toggle(
-                tr!("ui-options-confirm-no-transfer-settings"),
-                tr!("ui-options-confirm-no-transfer-settings-help"),
-                &field!(confirm_no_transfer_settings),
-            );
-        }),
+        2 => {
+            environment(cx);
+            weather(cx);
+        }
         3 => reflections_and_water(cx),
         4 => image(cx),
         5 => {
@@ -90,6 +25,196 @@ pub fn page(cx: &mut Cx, tab: usize) {
         6 => parcels(cx),
         _ => {}
     }
+}
+
+/// Graphics › Sky and environment: the environment's own settings.
+fn environment(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    cx.group(tr!("common-environment"), |cx| {
+        cx.row(
+            tr!("common-time-of-day"),
+            tr!("ui-options-shared-environment-region-parcel-eep-day-cycle"),
+            &field!(time_of_day),
+            |ui, s| {
+                let names = crate::ui::bars::time_of_day();
+                let mut changed = false;
+                egui::ComboBox::from_id_salt(ui.scope_id().with("tod"))
+                    .width(COMBO_W)
+                    .selected_text(names[s.time_of_day.min(crate::world::env::TIME_OF_DAY_PRESETS) as usize])
+                    .show_ui(ui, |ui| {
+                        for i in std::iter::once(0).chain(crate::world::env::TIME_OF_DAY_ORDER) {
+                            changed |= ui.selectable_value(&mut s.time_of_day, i, names[i as usize]).changed();
+                        }
+                    });
+                changed
+            },
+        );
+        cx.row(
+            tr!("ui-options-environment-fade"),
+            tr!("ui-options-fade-duration-when-you-change-the-environment-yourself-selector"),
+            &field!(env_manual_transition),
+            |ui, s| {
+                ui.add(
+                    egui::Slider::new(&mut s.env_manual_transition, 0.0..=60.0)
+                        .custom_parser(aurora_i18n::parse_number)
+                        .step_by(0.5)
+                        .suffix(" s")
+                        .trailing_fill(true),
+                )
+                .changed()
+            },
+        );
+        // the stars' sky (world/night_sky.rs)
+        {
+            use crate::world::night_sky::NightSky;
+            cx.unfolded().choice(
+                tr!("ui-options-night-sky"),
+                tr!("ui-options-night-sky-help"),
+                &field!(night_sky),
+                &[
+                    (NightSky::Real, tr!("ui-options-night-sky-real"), false),
+                    (NightSky::Legacy, tr!("ui-options-night-sky-legacy"), false),
+                ],
+            );
+            let legacy = cx.s.night_sky != NightSky::Real;
+            cx.subs(legacy, night_sky_rows);
+        }
+        // an Aurora difference, also listed in Preferences › Aurora
+        cx.experimental().toggle(
+            tr!("ui-options-colored-sky-ambient"),
+            tr!("ui-options-colored-sky-ambient-help"),
+            &field!(colored_sky_ambient),
+        );
+        cx.toggle(
+            tr!("ui-options-keep-environment"),
+            tr!("ui-options-restore-the-local-environment-selected-sky-water-and-day"),
+            &field!(env_persist),
+        );
+        // the "ignore" box of SettingsMakeNoTrans (Legacy Viewer:
+        // Preferences › Notifications › Alerts)
+        cx.toggle(
+            tr!("ui-options-confirm-no-transfer-settings"),
+            tr!("ui-options-confirm-no-transfer-settings-help"),
+            &field!(confirm_no_transfer_settings),
+        );
+    });
+}
+
+/// A share of 0..1 shown as a percentage.
+fn share(ui: &mut egui::Ui, v: &mut f32) -> bool {
+    ui.spacing_mut().slider_width = super::super::SLIDER_W;
+    ui.add(
+        egui::Slider::new(v, 0.0..=1.0)
+            .custom_formatter(|v, _| format!("{:.0} %", v * 100.0))
+            .custom_parser(|t| aurora_i18n::parse_number(t.trim().trim_end_matches('%').trim()).map(|v| v / 100.0))
+            .trailing_fill(true),
+    )
+    .changed()
+}
+
+/// Graphics › Sky and environment › Weather: the weather of this viewer only
+/// (rain now, snow to come), the same settings as the Environment window's
+/// Weather section. The wind and the thunder are also listed in
+/// Preferences › Aurora, with the other differences from the Legacy Viewer.
+fn weather(cx: &mut Cx) {
+    use crate::weather::{PUDDLE_DISTANCE, Precipitation, WeatherQuality};
+    use aurora_i18n::tr;
+    cx.group(tr!("ui-weather"), |cx| {
+        cx.choice(
+            tr!("ui-weather-precipitation"),
+            tr!("ui-weather-precipitation-tip"),
+            &field!(weather.precipitation),
+            &[
+                (Precipitation::Rain, tr!("ui-weather-rain"), false),
+                (Precipitation::Snow, tr!("ui-weather-snow"), false),
+            ],
+        );
+        cx.row(
+            tr!("ui-weather-amount"),
+            tr!("ui-weather-amount-tip"),
+            &field!(weather.amount),
+            |ui, s| share(ui, &mut s.weather.amount),
+        );
+        cx.row(
+            tr!("ui-weather-wind"),
+            tr!("ui-weather-wind-tip"),
+            &field!(weather.wind_min),
+            |ui, s| {
+                let w = &mut s.weather;
+                let changed = share(ui, &mut w.wind_min);
+                if changed {
+                    w.wind_max = w.wind_max.max(w.wind_min);
+                }
+                changed
+            },
+        );
+        cx.row(
+            tr!("ui-weather-gusts"),
+            tr!("ui-weather-gusts-tip"),
+            &field!(weather.wind_max),
+            |ui, s| {
+                let w = &mut s.weather;
+                let changed = share(ui, &mut w.wind_max);
+                if changed {
+                    w.wind_min = w.wind_min.min(w.wind_max);
+                }
+                changed
+            },
+        );
+        cx.unfolded().toggle(
+            tr!("ui-weather-wind-follow-region"),
+            tr!("ui-weather-wind-follow-region-tip"),
+            &field!(weather.wind_follow_region),
+        );
+        let follow = cx.s.weather.wind_follow_region;
+        cx.subs(follow, |cx| {
+            cx.row(
+                tr!("ui-weather-wind-from"),
+                tr!("ui-weather-wind-from-tip"),
+                &field!(weather.wind_from),
+                |ui, s| {
+                    ui.spacing_mut().slider_width = super::super::SLIDER_W;
+                    ui.add(
+                        egui::Slider::new(&mut s.weather.wind_from, 0.0..=355.0)
+                            .step_by(5.0)
+                            .custom_formatter(|v, _| format!("{v:.0}° {}", crate::ui::environment::compass_point(v as f32)))
+                            .custom_parser(|t| t.trim().trim_end_matches(|c: char| !c.is_ascii_digit()).parse().ok())
+                            .trailing_fill(true),
+                    )
+                    .changed()
+                },
+            );
+        });
+        cx.toggle(tr!("ui-weather-puddles"), tr!("ui-weather-puddles-tip"), &field!(weather.puddles));
+        cx.slider_whole(
+            tr!("ui-weather-distance"),
+            tr!("ui-weather-distance-tip"),
+            &field!(weather.puddle_distance),
+            PUDDLE_DISTANCE,
+            " m",
+        );
+        cx.unfolded()
+            .toggle(tr!("ui-weather-thunder"), tr!("ui-weather-thunder-tip"), &field!(weather.thunder));
+        let thunder_off = !cx.s.weather.thunder;
+        cx.subs(thunder_off, |cx| {
+            cx.row(
+                tr!("ui-weather-strikes"),
+                tr!("ui-weather-strikes-tip"),
+                &field!(weather.thunder_frequency),
+                |ui, s| share(ui, &mut s.weather.thunder_frequency),
+            );
+        });
+        cx.choice(
+            tr!("ui-weather-quality"),
+            tr!("ui-weather-quality-tip"),
+            &field!(weather.quality),
+            &[
+                (WeatherQuality::Low, tr!("ui-weather-quality-low"), false),
+                (WeatherQuality::Medium, tr!("ui-weather-quality-medium"), false),
+                (WeatherQuality::High, tr!("ui-weather-quality-high"), false),
+            ],
+        );
+    });
 }
 
 /// The GPU the viewer draws with (#894): automatic (discrete first) or one

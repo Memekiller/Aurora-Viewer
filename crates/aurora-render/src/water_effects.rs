@@ -269,7 +269,7 @@ impl WaterGpu {
     /// changed.
     pub fn upload_rain_ground(&mut self, queue: &wgpu::Queue, ground: &RainGround) {
         let n = (RAIN_GROUND_SIZE * RAIN_GROUND_SIZE) as usize;
-        if ground.heights.len() != n || !(ground.extent > 0.0) {
+        if ground.heights.len() != n || ground.extent.is_nan() || ground.extent <= 0.0 {
             self.rain_area = [0.0; 3];
             return;
         }

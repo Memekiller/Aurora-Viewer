@@ -4,6 +4,7 @@
 //! to the theme here (docs/BRANDING.md); the settings keep the rows of the
 //! other pages.
 
+use super::super::Page;
 use super::super::cx::{Cx, F, field};
 use crate::settings::{ChatStyle, NotificationsStyle, PhotoWindowStyle, Settings, WorldMapStyle};
 use crate::theme::Palette;
@@ -342,6 +343,28 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-colored-sky-ambient-help"),
                     &field!(colored_sky_ambient),
                     &[(true, aurora, true), (false, tr!("ui-options-aurora-classic"), false)],
+                );
+            });
+            // the weather is Aurora's own (the Legacy Viewer has none): its
+            // rows of Graphics › Sky and environment, the same settings
+            cx.group(tr!("ui-weather"), |cx| {
+                cx.note(tr!("ui-options-aurora-weather-note"));
+                cx.borrow(
+                    Page::Graphics,
+                    2,
+                    &[
+                        "weather.precipitation",
+                        "weather.amount",
+                        "weather.wind_min",
+                        "weather.wind_max",
+                        "weather.wind_follow_region",
+                        "weather.wind_from",
+                        "weather.puddles",
+                        "weather.puddle_distance",
+                        "weather.thunder",
+                        "weather.thunder_frequency",
+                        "weather.quality",
+                    ],
                 );
             });
             cx.group(tr!("common-interface"), |cx| {

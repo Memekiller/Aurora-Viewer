@@ -1022,6 +1022,10 @@ pub struct RenderSettings {
     pub mirror_scale: f32,
     /// Screen-space reflections on glossy surfaces.
     pub ssr: bool,
+    /// Rain prototype: the G-buffer of the screen-space reflections is drawn
+    /// while it rains, even with them off, for the wet surfaces' smooth
+    /// facings and materials (the reflections themselves only with `ssr`).
+    pub rain_surfaces: bool,
     /// Anisotropic texture filtering (1 = off, 2, 4, 8, 16).
     pub anisotropy: u16,
     /// Reflection probe cube slots, the default probe included
@@ -1029,6 +1033,13 @@ pub struct RenderSettings {
     pub probe_slots: u32,
     /// GPU occlusion culling (UseOcclusion).
     pub occlusion: bool,
+}
+
+impl RenderSettings {
+    /// The frame draws the G-buffer (normal, roughness, metallic).
+    pub fn gbuffer(&self) -> bool {
+        self.ssr || self.rain_surfaces
+    }
 }
 
 impl Default for RenderSettings {
@@ -1051,6 +1062,7 @@ impl Default for RenderSettings {
             water_reflection_scale: 0.25,
             mirror_scale: 0.25,
             ssr: false,
+            rain_surfaces: false,
             anisotropy: 8,
             probe_slots: 32,
             occlusion: true,

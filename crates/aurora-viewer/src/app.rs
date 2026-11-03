@@ -10299,6 +10299,7 @@ impl App {
         } else {
             &self.empty_lists
         };
+        gfx.renderer.set_rain_surfaces(self.env_ui.rain() > 0.0);
         let stats = if self.demo && gfx.renderer.capture_request && std::env::var_os("AURORA_DEMO_RENDER_TEXTURE").is_some() {
             gfx.renderer.render_world_texture_capture(fp, lists)
         } else {

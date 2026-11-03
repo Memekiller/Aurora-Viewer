@@ -3083,7 +3083,7 @@ impl Backend {
             &gbuf_layout,
             msaa_samples,
             format,
-            settings.ssr,
+            settings.gbuffer(),
         );
         let ssao = Self::make_ssao(&device);
         let gtao = crate::gtao::Gtao::new(&device);
@@ -3147,7 +3147,14 @@ impl Backend {
         let cull = GpuCull::new(&device);
         let motion_history = crate::motion_history::MotionHistory::new(&device);
         let motion_debug = crate::motion_debug::asked().then(|| crate::motion_debug::MotionDebug::new(&device, config.format));
-        let impostors = Impostors::new(&device, &frame_layout, &records_layout, &tex_layout, msaa_samples, settings.ssr);
+        let impostors = Impostors::new(
+            &device,
+            &frame_layout,
+            &records_layout,
+            &tex_layout,
+            msaa_samples,
+            settings.gbuffer(),
+        );
         let particle_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("particles"),
             size: 4096 * std::mem::size_of::<ParticleInstance>() as u64,
@@ -4322,7 +4329,7 @@ impl Backend {
         );
         let water_interface = make_view(device, "nearest water interface", w, h, DEPTH_FORMAT, 1, sampled).1;
         let water_mask = make_view(device, "water exclusion mask", w, h, wgpu::TextureFormat::R8Unorm, 1, sampled).1;
-        let (gbuf_msaa, gbuf) = if s.ssr {
+        let (gbuf_msaa, gbuf) = if s.gbuffer() {
             (
                 (samples > 1).then(|| make_view(device, "gbuffer msaa", w, h, GBUF_FORMAT, samples, att).1),
                 Some(make_view(device, "gbuffer", w, h, GBUF_FORMAT, 1, sampled).1),
@@ -4919,18 +4926,23 @@ impl Backend {
             AntiAliasing::Msaa(n) => self.msaa_supported.iter().copied().filter(|&m| m <= n).max().unwrap_or(1),
             _ => 1,
         };
-        if (samples, s.ssr) == (self.msaa_samples, self.settings.ssr) {
+        if (samples, s.gbuffer()) == (self.msaa_samples, self.settings.gbuffer()) {
             // (a set still compiling for other samples is no longer wanted)
             self.pipeline_build = None;
             self.apply_settings_with(s, None);
             return;
         }
-        if self.pipeline_build.as_ref().is_none_or(|b| (b.samples, b.ssr) != (samples, s.ssr)) {
+        if self
+            .pipeline_build
+            .as_ref()
+            .is_none_or(|b| (b.samples, b.ssr) != (samples, s.gbuffer()))
+        {
             log::info!(
-                "compiling the pipelines for {samples} sample(s), SSR {}",
-                if s.ssr { "on" } else { "off" }
+                "compiling the pipelines for {samples} sample(s), SSR {}, G-buffer {}",
+                if s.ssr { "on" } else { "off" },
+                if s.gbuffer() { "on" } else { "off" }
             );
-            self.pipeline_build = Some(self.start_pipeline_build(samples, s.ssr));
+            self.pipeline_build = Some(self.start_pipeline_build(samples, s.gbuffer()));
         }
         let Some(build) = &self.pipeline_build else {
             return;
@@ -4950,6 +4962,7 @@ impl Backend {
                 let now = RenderSettings {
                     aa: self.settings.aa,
                     ssr: self.settings.ssr,
+                    rain_surfaces: self.settings.rain_surfaces,
                     ..s
                 };
                 if now != self.settings {
@@ -4969,7 +4982,7 @@ impl Backend {
                     &self.gbuf_layout,
                     samples,
                     self.config.format,
-                    s.ssr,
+                    s.gbuffer(),
                 );
                 let impostors = Impostors::make_pipelines(
                     &self.device,
@@ -4978,7 +4991,7 @@ impl Backend {
                     &self.records_layout,
                     &self.tex_layout,
                     samples,
-                    s.ssr,
+                    s.gbuffer(),
                 );
                 self.apply_settings_with(s, Some((samples, scene, impostors)));
             }
@@ -7913,7 +7926,7 @@ impl Backend {
         {
             let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b", !split, false);
             bind_mesh(&mut pass, &self.groups.b);
-            if let (Some(ssr), Some(gbg)) = (&self.pipelines.ssr, &self.gbuf_group) {
+            if let (true, Some(ssr), Some(gbg)) = (self.settings.ssr, &self.pipelines.ssr, &self.gbuf_group) {
                 pass.set_pipeline(ssr);
                 pass.set_bind_group(3, gbg, &[]);
                 pass.draw(0..3, 0..1);

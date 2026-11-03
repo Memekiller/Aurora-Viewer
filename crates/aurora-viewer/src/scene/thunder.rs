@@ -387,13 +387,18 @@ impl Thunder {
             if main < 0.02 {
                 continue;
             }
-            let scale = (reach * 0.85).min(bolt.distance) / bolt.distance;
             let across = bolt.from.perp();
             let base = Vec3::new(eye.x + bolt.from.x * bolt.distance, eye.y + bolt.from.y * bolt.distance, ground);
-            let place = |p: Vec3| {
-                let w = base + (across * p.x + bolt.from * p.y).extend(p.z);
-                eye + (w - eye) * scale
-            };
+            let world = |p: Vec3| base + (across * p.x + bolt.from * p.y).extend(p.z);
+            // by its farthest point (its top, a kilometre or two up), so
+            // that none of it is beyond the frame's far end
+            let farthest = bolt
+                .segments
+                .iter()
+                .map(|s| world(s.a).distance(eye).max(world(s.b).distance(eye)))
+                .fold(1.0f32, f32::max);
+            let scale = ((reach * 0.85) / farthest).min(1.0);
+            let place = |p: Vec3| eye + (world(p) - eye) * scale;
             // a few metres wide where it struck, whatever the distance
             let width = (2.0 + bolt.distance * 0.0025) * scale;
             for s in &bolt.segments {

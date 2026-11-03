@@ -652,28 +652,6 @@ pub fn rotation_from(azimuth: f32, elevation: f32) -> Quat {
     Quat::from_rotation_z(-az) * Quat::from_rotation_y(-el)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn azimuth_and_elevation_round_trip() {
-        for (az, el) in [(0.0f32, 30.0f32), (30.0, 10.0), (135.0, -20.0), (270.0, 60.0), (359.0, 1.0)] {
-            let q = rotation_from(az, el);
-            let (a, e) = azimuth_elevation(q);
-            assert!((a - az).abs() < 0.01 || (a - az).abs() > 359.9, "{az} -> {a}");
-            assert!((e - el).abs() < 0.01, "{el} -> {e}");
-            // elevation lifts the direction, azimuth turns it clockwise from east
-            let d = q * Vec3::X;
-            assert!((d.z - el.to_radians().sin()).abs() < 1e-5);
-        }
-        let d = rotation_from(90.0, 0.0) * Vec3::X;
-        assert!(d.y < -0.99, "90° is south of east: {d}");
-        let (_, e) = azimuth_elevation(rotation_from(0.0, 90.0));
-        assert!((e - 90.0).abs() < 0.1, "{e}");
-    }
-}
-
 /// A row's label in the label column, with its tip.
 fn row_label(ui: &mut egui::Ui, p: &Palette, text: &str, tip: &str) {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(LABEL_W, 20.0), egui::Sense::hover());
@@ -716,8 +694,8 @@ fn weather_section(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
             row_label(
                 ui,
                 p,
-                &aurora_i18n::tr!("ui-weather-precipitation"),
-                &aurora_i18n::tr!("ui-weather-precipitation-tip"),
+                aurora_i18n::tr!("ui-weather-precipitation"),
+                aurora_i18n::tr!("ui-weather-precipitation-tip"),
             );
             let rain = aurora_i18n::tr!("ui-weather-rain");
             let snow = aurora_i18n::tr!("ui-weather-snow");
@@ -737,8 +715,8 @@ fn weather_section(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
             row_label(
                 ui,
                 p,
-                &aurora_i18n::tr!("ui-weather-amount"),
-                &aurora_i18n::tr!("ui-weather-amount-tip"),
+                aurora_i18n::tr!("ui-weather-amount"),
+                aurora_i18n::tr!("ui-weather-amount-tip"),
             );
             let mut amount = w.rain_or_amount();
             if ui.add(egui::Slider::new(&mut amount, 0.0..=1.0).show_value(false)).changed() {
@@ -748,12 +726,7 @@ fn weather_section(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
         // the wind, wandering between its lulls and its gusts; dragging one
         // past the other takes it along
         ui.horizontal(|ui| {
-            row_label(
-                ui,
-                p,
-                &aurora_i18n::tr!("ui-weather-wind"),
-                &aurora_i18n::tr!("ui-weather-wind-tip"),
-            );
+            row_label(ui, p, aurora_i18n::tr!("ui-weather-wind"), aurora_i18n::tr!("ui-weather-wind-tip"));
             if ui.add(egui::Slider::new(&mut w.wind_min, 0.0..=1.0).show_value(false)).changed() {
                 w.wind_max = w.wind_max.max(w.wind_min);
             }
@@ -762,8 +735,8 @@ fn weather_section(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
             row_label(
                 ui,
                 p,
-                &aurora_i18n::tr!("ui-weather-gusts"),
-                &aurora_i18n::tr!("ui-weather-gusts-tip"),
+                aurora_i18n::tr!("ui-weather-gusts"),
+                aurora_i18n::tr!("ui-weather-gusts-tip"),
             );
             if ui.add(egui::Slider::new(&mut w.wind_max, 0.0..=1.0).show_value(false)).changed() {
                 w.wind_min = w.wind_min.min(w.wind_max);
@@ -774,8 +747,8 @@ fn weather_section(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
             row_label(
                 ui,
                 p,
-                &aurora_i18n::tr!("ui-weather-wind-from"),
-                &aurora_i18n::tr!("ui-weather-wind-from-tip"),
+                aurora_i18n::tr!("ui-weather-wind-from"),
+                aurora_i18n::tr!("ui-weather-wind-from-tip"),
             );
             widgets::checkbox(ui, p, &mut w.wind_follow_region, aurora_i18n::tr!("ui-weather-wind-region"));
             ui.add_enabled_ui(!w.wind_follow_region, |ui| {
@@ -793,8 +766,8 @@ fn weather_section(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
             row_label(
                 ui,
                 p,
-                &aurora_i18n::tr!("ui-weather-puddles"),
-                &aurora_i18n::tr!("ui-weather-puddles-tip"),
+                aurora_i18n::tr!("ui-weather-puddles"),
+                aurora_i18n::tr!("ui-weather-puddles-tip"),
             );
             widgets::checkbox(ui, p, &mut w.puddles, "");
         });
@@ -802,8 +775,8 @@ fn weather_section(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
             row_label(
                 ui,
                 p,
-                &aurora_i18n::tr!("ui-weather-distance"),
-                &aurora_i18n::tr!("ui-weather-distance-tip"),
+                aurora_i18n::tr!("ui-weather-distance"),
+                aurora_i18n::tr!("ui-weather-distance-tip"),
             );
             ui.add(egui::Slider::new(&mut w.puddle_distance, PUDDLE_DISTANCE).step_by(1.0).suffix(" m"));
         });
@@ -812,8 +785,8 @@ fn weather_section(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
             row_label(
                 ui,
                 p,
-                &aurora_i18n::tr!("ui-weather-thunder"),
-                &aurora_i18n::tr!("ui-weather-thunder-tip"),
+                aurora_i18n::tr!("ui-weather-thunder"),
+                aurora_i18n::tr!("ui-weather-thunder-tip"),
             );
             widgets::checkbox(ui, p, &mut w.thunder, "");
         });
@@ -822,8 +795,8 @@ fn weather_section(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
             row_label(
                 ui,
                 p,
-                &aurora_i18n::tr!("ui-weather-strikes"),
-                &aurora_i18n::tr!("ui-weather-strikes-tip"),
+                aurora_i18n::tr!("ui-weather-strikes"),
+                aurora_i18n::tr!("ui-weather-strikes-tip"),
             );
             ui.add_enabled(w.thunder, egui::Slider::new(&mut w.thunder_frequency, 0.0..=1.0).show_value(false));
         });
@@ -832,8 +805,8 @@ fn weather_section(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
             row_label(
                 ui,
                 p,
-                &aurora_i18n::tr!("ui-weather-quality"),
-                &aurora_i18n::tr!("ui-weather-quality-tip"),
+                aurora_i18n::tr!("ui-weather-quality"),
+                aurora_i18n::tr!("ui-weather-quality-tip"),
             );
             let low = aurora_i18n::tr!("ui-weather-quality-low");
             let medium = aurora_i18n::tr!("ui-weather-quality-medium");
@@ -858,5 +831,27 @@ fn weather_section(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
     });
     if *w != before {
         w.touched = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn azimuth_and_elevation_round_trip() {
+        for (az, el) in [(0.0f32, 30.0f32), (30.0, 10.0), (135.0, -20.0), (270.0, 60.0), (359.0, 1.0)] {
+            let q = rotation_from(az, el);
+            let (a, e) = azimuth_elevation(q);
+            assert!((a - az).abs() < 0.01 || (a - az).abs() > 359.9, "{az} -> {a}");
+            assert!((e - el).abs() < 0.01, "{el} -> {e}");
+            // elevation lifts the direction, azimuth turns it clockwise from east
+            let d = q * Vec3::X;
+            assert!((d.z - el.to_radians().sin()).abs() < 1e-5);
+        }
+        let d = rotation_from(90.0, 0.0) * Vec3::X;
+        assert!(d.y < -0.99, "90° is south of east: {d}");
+        let (_, e) = azimuth_elevation(rotation_from(0.0, 90.0));
+        assert!((e - 90.0).abs() < 0.1, "{e}");
     }
 }

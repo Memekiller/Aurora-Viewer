@@ -106,6 +106,24 @@ pub(crate) fn aurora_text(p: &Palette, text: &str, font: FontId) -> egui::text::
     job
 }
 
+/// `text` with only the word "Aurora" in the aurora gradient, the rest in
+/// `ink`: an Aurora feature's title outside Preferences (Aurora Weather),
+/// whatever the word order of the language.
+pub(crate) fn aurora_word(p: &Palette, text: &str, font: FontId, ink: Color32) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    let mut rest = text;
+    while let Some(at) = rest.find("Aurora") {
+        job.append(&rest[..at], 0.0, egui::TextFormat::simple(font.clone(), ink));
+        for (i, ch) in "Aurora".chars().enumerate() {
+            let color = aurora_color(p, i as f32 / 5.0);
+            job.append(&ch.to_string(), 0.0, egui::TextFormat::simple(font.clone(), color));
+        }
+        rest = &rest[at + "Aurora".len()..];
+    }
+    job.append(rest, 0.0, egui::TextFormat::simple(font, ink));
+    job
+}
+
 /// The entry of the page in the sidebar: the neighbours' entry, with the
 /// aurora gradient in its edge mark and its name.
 pub fn nav_entry(ui: &mut egui::Ui, p: &Palette, label: &str, icon: &str, selected: bool) -> egui::Response {
@@ -353,7 +371,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
             });
             // the weather is Aurora's own (the Legacy Viewer has none): its
             // rows of Graphics › Sky and environment, the same settings
-            cx.aurora_group(tr!("ui-weather-aurora"), |cx| {
+            cx.group(tr!("ui-weather"), |cx| {
                 cx.note(tr!("ui-options-aurora-weather-note"));
                 cx.borrow(
                     Page::Graphics,

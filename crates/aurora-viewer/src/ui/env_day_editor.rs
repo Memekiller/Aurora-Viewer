@@ -468,7 +468,7 @@ impl DayEditorUi {
         let enabled = self.rights.modify && self.doc.is_some();
         ui.horizontal(|ui| {
             let font = egui::FontId::new(12.0, crate::ui::fonts::semibold(ui.ctx()));
-            ui.label(crate::ui::options::aurora_text(p, tr!("ui-weather-aurora"), font))
+            ui.label(crate::ui::options::aurora_word(p, tr!("ui-weather-aurora"), font, p.ink))
                 .on_hover_text(tr!("ui-day-editor-weather-tip"));
             ui.add_space(8.0);
             ui.add_enabled_ui(enabled, |ui| {

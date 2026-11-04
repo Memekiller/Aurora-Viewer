@@ -100,15 +100,14 @@ fn environment(cx: &mut Cx) {
     });
 }
 
-
-/// Graphics › Sky and environment › Aurora Weather: what the weather costs
+/// Graphics › Sky and environment › Weather: what the weather costs
 /// and what it lets regions do (the weather itself, what falls and how hard,
 /// is the Environment window's). Also listed in Preferences › Aurora, with
 /// the other differences from the Legacy Viewer.
 fn weather(cx: &mut Cx) {
     use crate::weather::{PUDDLE_DISTANCE, WeatherQuality};
     use aurora_i18n::tr;
-    cx.aurora_group(tr!("ui-weather-aurora"), |cx| {
+    cx.group(tr!("ui-weather"), |cx| {
         cx.choice(
             tr!("ui-weather-quality"),
             tr!("ui-weather-quality-tip"),

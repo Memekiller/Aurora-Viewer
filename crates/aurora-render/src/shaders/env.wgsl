@@ -2555,11 +2555,13 @@ fn fs_rain_wet_g(in: RainWetOut) -> @location(0) vec4<f32> {
         // rough reads as porous; metal never soaks anything up
         let porosity = clamp((g.z - 0.15) / 0.7, 0.0, 1.0) * (1.0 - g.w);
         // the median around says whether a surface is level, but only one
-        // that is itself near level by its shape (the depth's, no normal
-        // map): a leg in front of the ground is mostly ground around it
-        let shape = rain_depth_normal(uv, world).z;
+        // that is itself near level: a leg in front of the ground is mostly
+        // ground around it. Its own facing is the G-buffer's, smooth across
+        // the triangles (the depth's normal is flat on each, and drew the
+        // triangles of avatars and round meshes); with some room, so that a
+        // normal map's bevels on level ground do not punch holes
         let around = rain_build_level(uv, world, n);
-        let level = select(around, min(around, shape), shape < 0.9);
+        let level = min(around, n.z + 0.1);
         out = rain_wet_surface(in.clip.xy, uv, world, n, porosity, false, level);
     }
     if (out.a < 0.01) { discard; }
@@ -2620,12 +2622,13 @@ fn rain_surface_height(xy: vec2<f32>, near_z: f32) -> f32 {
 }
 
 // Snow: a flake that lands lies on the surface and melts away in one to
-// two and a half seconds, as rain splashes; each of the six droplets of a
-// splash place is a flake of its own, at its own place. None in the lee of
-// cover, nor on the water (it melts at once).
+// two and a half seconds, as rain splashes: as many as the snow brings
+// down (renderer.rs: about two a square metre in heavy snow). None in the
+// lee of cover, nor on the water (it melts at once).
 fn snow_landed(vertex: u32, instance: u32) -> RainOut {
     let j = vertex / 6u;
-    let seed0 = rain_hash(instance * 7u + j * 131u + 2000003u);
+    if (j > 0u) { return rain_splash_none(); }
+    let seed0 = rain_hash(instance * 7u + 2000003u);
     let life_s = 1.0 + rain_rand(seed0) * 1.5;
     let phase = frame.camera_pos.w / life_s + rain_rand(seed0 + 1u);
     let age = fract(phase) * life_s;
@@ -2638,6 +2641,9 @@ fn snow_landed(vertex: u32, instance: u32) -> RainOut {
     let surface = rain_surface_height(xy, cam.z);
     if (surface < -1e8 || surface < frame.params.y || abs(surface - cam.z) > 40.0) { return rain_splash_none(); }
     if (rain_reached_height(xy, cam.z) > surface + 0.05) { return rain_splash_none(); }
+    // indoors, none on the roofs above (a roof drawn blended does not hide
+    // what lies on it)
+    if (surface > cam.z && rain_sheltered(cam + vec3<f32>(0.0, 0.0, 0.3)) > 0.5) { return rain_splash_none(); }
     let k = rain_rand(seed + 3u);
     let real = (2.0 + 8.0 * k * k) * frame.rain_look.w * 0.001;
     let pos = vec3<f32>(xy, surface + 0.02);
@@ -2763,7 +2769,7 @@ fn rain_far_streaks(anchor: vec2<f32>, d: vec3<f32>, scene: f32, pixel: f32, hea
     // more by the wind, and brighter (white, where rain is clear)
     let snow = snowing();
     let speed = select(7.0, 1.0, snow);
-    let lean = select(1.7, 4.0, snow);
+    let lean = select(1.7, 1.6, snow);
     let o = cam.xy - anchor;
     let a = dot(d.xy, d.xy);
     let b = dot(o, d.xy);
@@ -2809,12 +2815,14 @@ fn rain_far_streaks(anchor: vec2<f32>, d: vec3<f32>, scene: f32, pixel: f32, hea
             let first = floor(base_u / column);
             let at_col = (first + 0.5) * column / radius;
             let tangent = vec2<f32>(-sin(at_col), cos(at_col));
-            let slant = clamp(dot(frame.rain_wind.zw, tangent) / speed, -lean, lean);
+            // flakes far off are seen through a lot of air and sway as they
+            // go: their lean is gentler than one flake's
+            let slant = clamp(dot(frame.rain_wind.zw, tangent) / speed * select(1.0, 0.45, snow), -lean, lean);
             let drift = select(0.0, dot(frame.rain_wind.xy, tangent), snow);
             let u = base_u + p.z * slant - drift;
             let col = floor(u / column);
             let seed = bitcast<u32>(i32(col)) * 747796405u + u32(k * 2 + s) * 2891336453u + 17u;
-            if (rain_rand(seed + 3u) > heavy * 0.8 + 0.1) { continue; }
+            if (rain_rand(seed + 3u) > select(heavy * 0.8 + 0.1, heavy * 0.45 + 0.05, snow)) { continue; }
             var centre = (col + 0.15 + rain_rand(seed) * 0.7) * column;
             if (snow) {
                 // each flake sways a little as it falls
@@ -2827,7 +2835,7 @@ fn rain_far_streaks(anchor: vec2<f32>, d: vec3<f32>, scene: f32, pixel: f32, hea
             let at = fract((p.z + time * speed * (1.0 - 0.1 * f32(k))) / period + rain_rand(seed + 2u)) * period;
             let along = smoothstep(0.0, length_here * 0.3, at) * (1.0 - smoothstep(length_here * 0.5, length_here, at));
             let faint = 0.3 + rain_rand(seed + 5u) * 0.7;
-            lift += across * along * faint * seen * drifts * (0.06 - 0.01 * f32(k)) * select(1.0, 2.2, snow);
+            lift += across * along * faint * seen * drifts * (0.06 - 0.01 * f32(k)) * select(1.0, 1.4, snow);
         }
     }
     return lift;

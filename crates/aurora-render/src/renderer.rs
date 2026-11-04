@@ -8149,7 +8149,10 @@ impl Backend {
                 // in snow: the flakes that land and melt
                 {
                     pass.set_pipeline(&self.pipelines.rain_splash);
-                    pass.draw(0..36, 0..(f.rain.clamp(0.0, 1.0) * 9_000.0 * rain_share(f.rain_look.quality)) as u32);
+                    // snow: one flake a place, as many as land (a 24 m square,
+                    // up to about two a square metre at once)
+                    let places = if f.rain_look.snow > 0.0 { 1_200.0 } else { 9_000.0 };
+                    pass.draw(0..36, 0..(f.rain.clamp(0.0, 1.0) * places * rain_share(f.rain_look.quality)) as u32);
                 }
                 // beyond the drops' box: the distant rain's layers
                 pass.set_pipeline(&self.pipelines.rain_far);

@@ -2056,8 +2056,9 @@ const RAIN_DRY_SECS: f32 = 120.0;
 const RAIN_FILL_SECS: f32 = 25.0;
 const RAIN_DRAIN_SECS: f32 = 150.0;
 /// How fast snow builds to a full cover (s, at full snow: a dusting in a
-/// minute, white in about five), and melts after (s; in rain, faster).
-const SNOW_FILL_SECS: f32 = 150.0;
+/// few minutes, white in about ten; as fs_rain_wet_update), and melts after
+/// (s; in rain, faster).
+const SNOW_FILL_SECS: f32 = 600.0;
 const SNOW_MELT_SECS: f32 = 900.0;
 const SNOW_RAIN_MELT_SECS: f32 = 120.0;
 

@@ -515,8 +515,11 @@ impl DayEditorUi {
     fn name_row(&mut self, ui: &mut egui::Ui, p: &Palette, out: &mut Vec<DayAction>) {
         ui.horizontal(|ui| {
             ui.label(RichText::new(aurora_i18n::tr!("ui-day-editor-name")).size(12.0).color(p.ink));
-            // refresh: renaming needs modify rights and an item
-            let enabled = self.rights.modify && self.rights.save && self.item.is_some();
+            // refresh: the Legacy Viewer renames only with modify rights and
+            // an item. Aurora: with modify rights, item or not (a day from a
+            // region or parcel, a new one), the name kept for Save As and
+            // applying, so that its Aurora Weather code can be written too
+            let enabled = self.rights.modify && self.rights.save && self.doc.is_some();
             let r = crate::ui::widgets::text_field(ui, enabled, &mut self.name, |b, _| {
                 egui::TextEdit::singleline(b).desired_width(320.0).char_limit(63)
             });

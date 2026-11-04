@@ -145,6 +145,11 @@ fn weather(cx: &mut Cx) {
                 crate::weather::SNOW_DISTANCE,
                 " m",
             );
+            cx.toggle(
+                tr!("ui-weather-footprints"),
+                tr!("ui-weather-footprints-tip"),
+                &field!(weather.snow_footprints),
+            );
         });
         cx.toggle(
             tr!("ui-weather-region"),

@@ -179,6 +179,15 @@ struct FrameU {
     /// a place new to the memory (0..1), z 1 while rain melts it, w the
     /// detail texture's slot (0: none).
     snow_cover: [f32; 4],
+    /// Snow footprints' map: its corner (xy), size (z, 0: none), w how many
+    /// `snow_stamps` this frame.
+    snow_trail: [f32; 4],
+    /// Its last corner (xy), the time since (z, s; < 0: none), w how hard
+    /// it snows (the prints fill in).
+    snow_trail_step: [f32; 4],
+    /// Feet set down this frame: x, y (m), the foot's heading (rad), its
+    /// half length (m).
+    snow_stamps: [[f32; 4]; crate::types::SNOW_STAMPS],
     /// The main view of a photo tile: its part of the photo
     /// ([`photo_part`]); zero otherwise. The screen-space reflections fade
     /// at the photo's edges, not the tile's.
@@ -927,6 +936,8 @@ struct Pipelines {
     rain_far: wgpu::RenderPipeline,
     /// Rain prototype's wetness memory update (`fs_rain_wet_update`).
     rain_wet_update: wgpu::RenderPipeline,
+    /// Snow footprints' update (`fs_snow_trail_update`).
+    snow_trail_update: wgpu::RenderPipeline,
     /// Rain prototype's wet ground and puddles (`fs_rain_wet`).
     rain_wet: wgpu::RenderPipeline,
     /// The same with the screen-space reflections' G-buffer (`fs_rain_wet_g`).
@@ -1704,6 +1715,7 @@ pub(crate) struct Backend {
     pipeline_build: Option<PipelineBuild>,
     /// Rain prototype's wetness memory bookkeeping.
     rain_wet: RainWet,
+    snow_trail: SnowTrail,
     vsync: bool,
     /// Presentation modes of the surface, read when it was created.
     present_modes: Vec<wgpu::PresentMode>,
@@ -2062,6 +2074,40 @@ const RAIN_DRAIN_SECS: f32 = 150.0;
 const SNOW_FILL_SECS: f32 = 600.0;
 const SNOW_MELT_SECS: f32 = 900.0;
 const SNOW_RAIN_MELT_SECS: f32 = 120.0;
+
+/// Snow footprints' bookkeeping: the trail map follows the camera, snapped
+/// to a metre (the update reads the last one at the same places).
+#[derive(Default)]
+struct SnowTrail {
+    origin: Option<Vec2>,
+    last: Option<Instant>,
+    uniform: [f32; 4],
+    step: [f32; 4],
+}
+
+impl SnowTrail {
+    /// One frame, `on` while footprints are kept (snow lying, the setting
+    /// on).
+    fn advance(&mut self, on: bool, snowing: f32, at: Vec2, stamps: u32) {
+        if !on {
+            *self = SnowTrail::default();
+            return;
+        }
+        let now = Instant::now();
+        let dt = self.last.map_or(-1.0, |t| now.duration_since(t).as_secs_f32().min(1.0));
+        let extent = crate::water_effects::SNOW_TRAIL_EXTENT;
+        let origin = (at - Vec2::splat(extent * 0.5)).floor();
+        let prev = self.origin.unwrap_or(origin);
+        self.uniform = [origin.x, origin.y, extent, stamps as f32];
+        self.step = [prev.x, prev.y, dt, snowing];
+        self.origin = Some(origin);
+        self.last = Some(now);
+    }
+
+    fn active(&self) -> bool {
+        self.last.is_some()
+    }
+}
 
 impl RainWet {
     fn active(&self) -> bool {
@@ -2892,6 +2938,17 @@ impl Backend {
         let frame_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("frame"),
             entries: &[
+                // snow footprints: how deep the snow is pressed down
+                wgpu::BindGroupLayoutEntry {
+                    binding: 27,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
                 // rain prototype: the wetness memory
                 wgpu::BindGroupLayoutEntry {
                     binding: 26,
@@ -3440,6 +3497,7 @@ impl Backend {
             msaa_samples,
             pipeline_build: None,
             rain_wet: RainWet::default(),
+            snow_trail: SnowTrail::default(),
             vsync,
             present_modes,
             settings,
@@ -3843,6 +3901,18 @@ impl Backend {
             format: Some(wgpu::TextureFormat::Rgba32Float),
             depth_format: None,
             ..base("rain wetness", "vs_rain_wet", "fs_rain_wet_update")
+        });
+        let snow_trail_update = pipe(PipeDesc {
+            vb: Vb::None,
+            cull: None,
+            blend: None,
+            write_mask: wgpu::ColorWrites::ALL,
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::Always,
+            samples: 1,
+            format: Some(wgpu::TextureFormat::R16Float),
+            depth_format: None,
+            ..base("snow footprints", "vs_rain_wet", "fs_snow_trail_update")
         });
         let rain_far = pipe(PipeDesc {
             vb: Vb::None,
@@ -4380,6 +4450,7 @@ impl Backend {
             rain_splash,
             rain_far,
             rain_wet_update,
+            snow_trail_update,
             glow,
             glow_water,
             glow_max,
@@ -4686,6 +4757,10 @@ impl Backend {
                     wgpu::BindGroupEntry {
                         binding: 26,
                         resource: wgpu::BindingResource::TextureView(&water_effects.rain_wet_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 27,
+                        resource: wgpu::BindingResource::TextureView(&water_effects.snow_trail_view),
                     },
                     wgpu::BindGroupEntry {
                         binding: 0,
@@ -5558,6 +5633,9 @@ impl Backend {
         u.rain_wet_step = self.rain_wet.step;
         u.snow_cover = self.rain_wet.snow_cover;
         u.snow_cover[3] = f.rain_look.snow_detail as f32;
+        u.snow_trail = self.snow_trail.uniform;
+        u.snow_trail_step = self.snow_trail.step;
+        u.snow_stamps = f.rain_look.snow_stamps;
         u.rain_look = [
             f32::from(u8::from(f.rain_look.puddles)),
             f.rain_look.distance,
@@ -6256,6 +6334,10 @@ impl Backend {
         let (rain, snow) = if f.rain_look.snow > 0.0 { (0.0, f.rain) } else { (f.rain, 0.0) };
         self.rain_wet.snow = self.rain_wet.snow.max(f.rain_look.snow_lying.clamp(0.0, 1.0));
         self.rain_wet.advance(rain, snow, f.camera_pos.truncate());
+        // footprints while snow lies and they are wanted
+        let trail_on = f.rain_look.footprints && (snow > 0.0 || self.rain_wet.snow > RAIN_WET_DRY) && !f.cutout;
+        let stamps = f.rain_look.snow_stamp_count.min(crate::types::SNOW_STAMPS as u32);
+        self.snow_trail.advance(trail_on, snow, f.camera_pos.truncate(), stamps);
         let mut main = self.frame_uniforms(fu, fu.view, Some(fu.camera_pos), &cascades, &splits);
         main.cam_up[3] = camera_water_level;
         if f.photo_tile != Mat4::IDENTITY {
@@ -8043,6 +8125,39 @@ impl Backend {
             encoder.copy_texture_to_texture(
                 self.water_effects.rain_wet_target.as_image_copy(),
                 self.water_effects.rain_wet.as_image_copy(),
+                size,
+            );
+        }
+        if self.snow_trail.active() {
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("snow footprints"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &self.water_effects.snow_trail_target_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                bind_mesh(&mut pass, &self.groups.a);
+                pass.set_pipeline(&self.pipelines.snow_trail_update);
+                pass.draw(0..3, 0..1);
+            }
+            let size = wgpu::Extent3d {
+                width: crate::water_effects::SNOW_TRAIL_SIZE,
+                height: crate::water_effects::SNOW_TRAIL_SIZE,
+                depth_or_array_layers: 1,
+            };
+            encoder.copy_texture_to_texture(
+                self.water_effects.snow_trail_target.as_image_copy(),
+                self.water_effects.snow_trail.as_image_copy(),
                 size,
             );
         }

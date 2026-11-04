@@ -2947,7 +2947,9 @@ the key frames that carry weather. `App::update_weather_now` lays it over the se
 snow are drawn by `aurora-render` (`shaders/env.wgsl`, the rain sections:
 drops or flakes, the shelter map, distant layers, wet ground and puddles),
 the snow lying on the ground by the same wet pass from the memory's third channel, with its detail
-texture uploaded by `scene/snow_detail.rs` (assets/snow, CC0), the thunder and lightning by
+texture uploaded by `scene/snow_detail.rs` (assets/snow, CC0) and footprints pressed by
+`scene/snow_trail.rs` (the feet of the avatars near, set down) into a trail map
+(`fs_snow_trail_update`), the thunder and lightning by
 `scene/thunder.rs` (its bolts as particles),
 the rain's sound by `scene/rain_sound.rs`.
 

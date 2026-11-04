@@ -151,6 +151,10 @@ pub struct RainGround {
 pub const RAIN_GROUND_SIZE: u32 = 128;
 /// Rain prototype: cells a side of the wetness memory (`fs_rain_wet_update`).
 pub const RAIN_WET_SIZE: u32 = 512;
+/// Snow footprints: texels a side of the trail map (`fs_snow_trail_update`)
+/// and the metres it covers around the camera (3 cm a texel).
+pub const SNOW_TRAIL_SIZE: u32 = 1024;
+pub const SNOW_TRAIL_EXTENT: f32 = 32.0;
 
 #[derive(Debug, Clone, Default)]
 pub struct WaterGround {
@@ -252,6 +256,12 @@ pub(crate) struct WaterGpu {
     pub rain_wet_target_view: wgpu::TextureView,
     pub rain_wet: wgpu::Texture,
     pub rain_wet_view: wgpu::TextureView,
+    /// Snow footprints: how deep the snow is pressed down (R), drawn into
+    /// `snow_trail_target` and copied into `snow_trail` (frame binding 27).
+    pub snow_trail_target: wgpu::Texture,
+    pub snow_trail_target_view: wgpu::TextureView,
+    pub snow_trail: wgpu::Texture,
+    pub snow_trail_view: wgpu::TextureView,
     ground_snapshot: Option<std::sync::Arc<[[f32; 2]]>>,
     group: wgpu::BindGroup,
     pipeline: wgpu::ComputePipeline,
@@ -407,6 +417,32 @@ impl WaterGpu {
         let rain_wet_target_view = rain_wet_target.create_view(&Default::default());
         let rain_wet = wet("rain wetness", wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST);
         let rain_wet_view = rain_wet.create_view(&Default::default());
+        let trail = |label, usage| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width: SNOW_TRAIL_SIZE,
+                    height: SNOW_TRAIL_SIZE,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::R16Float,
+                usage,
+                view_formats: &[],
+            })
+        };
+        let snow_trail_target = trail(
+            "snow footprints (drawn)",
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        );
+        let snow_trail_target_view = snow_trail_target.create_view(&Default::default());
+        let snow_trail = trail(
+            "snow footprints",
+            wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        );
+        let snow_trail_view = snow_trail.create_view(&Default::default());
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("water simulation"),
             layout: &pipeline.get_bind_group_layout(0),
@@ -524,6 +560,10 @@ impl WaterGpu {
             rain_wet_target_view,
             rain_wet,
             rain_wet_view,
+            snow_trail_target,
+            snow_trail_target_view,
+            snow_trail,
+            snow_trail_view,
             ground_snapshot: None,
             group,
             pipeline,

@@ -10118,6 +10118,12 @@ impl App {
         } else {
             aurora_render::ProbeFrame::default()
         };
+        // Aurora Weather: the feet set down in the lying snow this frame
+        let (snow_stamps, snow_stamp_count) = if self.weather_now.snow_footprints && self.weather_now.snow_settles && self.in_world() {
+            crate::scene::snow_trail::SnowTrails::stamps(&mut self.scene, &self.world, self.camera.position, world_clock())
+        } else {
+            ([[0.0; 4]; aurora_render::SNOW_STAMPS], 0)
+        };
         let mut fp = FrameParams {
             // (a window behind past the driver's budget pauses its 3D
             // drawing: its 3D targets shrink, texture_budget::Background)
@@ -10234,6 +10240,8 @@ impl App {
             rain_look: aurora_render::RainLook {
                 snow_detail: self.scene.snow_detail.slot(&mut gfx.renderer).unwrap_or(0),
                 snow_lying: self.snow_lying.0,
+                snow_stamps,
+                snow_stamp_count,
                 ..self.weather_now.rain_look(&self.weather_wind)
             },
             look: None,

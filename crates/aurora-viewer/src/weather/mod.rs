@@ -69,6 +69,8 @@ pub struct WeatherSettings {
     pub snow_settles: bool,
     /// How far the snow lying on the ground is drawn (m).
     pub snow_distance: f32,
+    /// Footprints in the lying snow, where avatars walk.
+    pub snow_footprints: bool,
     pub quality: WeatherQuality,
     /// The menu was used this session: `AURORA_RAIN` no longer applies.
     #[serde(skip)]
@@ -92,6 +94,7 @@ impl Default for WeatherSettings {
             snow_size: 0.5,
             snow_settles: true,
             snow_distance: SNOW_DISTANCE_DEFAULT,
+            snow_footprints: true,
             quality: WeatherQuality::High,
             touched: false,
         }
@@ -202,6 +205,10 @@ impl WeatherSettings {
             snow_detail: 0,
             // and a region's snow so far (weather/region.rs)
             snow_lying: 0.0,
+            footprints: self.snow_footprints && self.snow_settles,
+            // the app gives the feet set down (scene/snow_trail.rs)
+            snow_stamps: [[0.0; 4]; aurora_render::SNOW_STAMPS],
+            snow_stamp_count: 0,
             quality: match self.quality {
                 WeatherQuality::Low => 0,
                 WeatherQuality::Medium => 1,

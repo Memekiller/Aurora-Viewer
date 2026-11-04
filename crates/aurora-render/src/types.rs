@@ -1280,7 +1280,16 @@ pub struct RainLook {
     /// How deep snow lies in the open at least (0..1): a region's weather
     /// gives its whole history (who comes in late sees what has built up).
     pub snow_lying: f32,
+    /// Footprints are kept in the lying snow.
+    pub footprints: bool,
+    /// Feet set down this frame: x, y (m), the foot's heading (rad), its half
+    /// length (m); the first `snow_stamp_count`.
+    pub snow_stamps: [[f32; 4]; SNOW_STAMPS],
+    pub snow_stamp_count: u32,
 }
+
+/// The most feet set down in the snow in one frame.
+pub const SNOW_STAMPS: usize = 16;
 
 impl Default for RainLook {
     fn default() -> Self {
@@ -1293,6 +1302,9 @@ impl Default for RainLook {
             snow: 0.0,
             snow_detail: 0,
             snow_lying: 0.0,
+            footprints: false,
+            snow_stamps: [[0.0; 4]; SNOW_STAMPS],
+            snow_stamp_count: 0,
         }
     }
 }

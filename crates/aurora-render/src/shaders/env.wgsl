@@ -2560,9 +2560,18 @@ fn snow_cover(clip: vec2<f32>, world: vec3<f32>, n: vec3<f32>) -> vec4<f32> {
         // its bumps over the surface's own facing (the snow lies level-ish)
         sn = normalize(n + vec3<f32>(tn.xy * 0.7, 0.0));
     }
+    // footprints: the snow pressed down, its walls tilting the facing (a
+    // dent about as deep as the snow lies, a few centimetres), the thin
+    // snow pressed through to what is under it
+    let print = snow_pressed(world.xy);
+    let pressed = print.x * slope;
+    if (pressed > 0.001) {
+        sn = normalize(sn + vec3<f32>(print.yz * 6.0 * lying, 0.0));
+        height = mix(height, 0.0, pressed * 0.6);
+    }
     // a dusting fills the hollows first, then covers the bumps
     let patches = snow_noise(world.xy * 2.3) * 0.65 + snow_noise(world.xy * 9.1) * 0.35;
-    let gathered = lying * 1.3 + (0.5 - height) * 0.45 * (1.0 - lying);
+    let gathered = (lying * 1.3 + (0.5 - height) * 0.45 * (1.0 - lying)) * (1.0 - pressed * (1.0 - lying) * 0.85);
     var cover = smoothstep(patches * 0.9, patches * 0.9 + 0.25, gathered);
     cover *= 1.0 - smoothstep(far * 0.8, far, dist);
     if (cover <= 0.002) { return vec4<f32>(0.0); }
@@ -2577,10 +2586,70 @@ fn snow_cover(clip: vec2<f32>, world: vec3<f32>, n: vec3<f32>) -> vec4<f32> {
     let g = rain_rand(rain_hash(bitcast<u32>(i32(cell.x)) * 2654435761u ^ bitcast<u32>(i32(cell.y))));
     let half = normalize(frame.sun_dir.xyz + view);
     let glint = step(0.985, g) * pow(max(dot(sn, half), 0.0), 40.0) * frame.sun_color.rgb * shade * 2.0;
-    // the hollows a little shaded
-    let cavity = 0.86 + 0.14 * height;
+    // the hollows a little shaded, the packed snow of a print greyer
+    let cavity = (0.86 + 0.14 * height) * (1.0 - 0.22 * pressed);
     let color = (ambient * 0.95 * cavity + sun * 0.9 + lamps * 0.6) * 0.92 + glint;
     return vec4<f32>(apply_fog(color, world) * cover, cover);
+}
+
+// ------------------------------------------------- snow footprints
+// Where feet were set down in the lying snow: how deep it is pressed (0..1)
+// in a map that follows the camera (frame.snow_trail, 3 cm a texel). Each
+// frame the last one is read at the same places, filled in by the snow
+// still falling (fresh snow covers the prints in some minutes), and the
+// feet set down this frame (frame.snow_stamps) press theirs: a rounded
+// sole, heel to toe along the foot's heading.
+@group(0) @binding(27) var snow_trail: texture_2d<f32>;
+
+fn snow_trail_stamp(xy: vec2<f32>, stamp: vec4<f32>) -> f32 {
+    let along = vec2<f32>(cos(stamp.z), sin(stamp.z));
+    let d = xy - stamp.xy;
+    let a = dot(d, along) / max(stamp.w, 0.05);
+    let b = dot(d, vec2<f32>(-along.y, along.x)) / max(stamp.w * 0.42, 0.03);
+    // a sole: wider at the ball than the heel
+    let width = 1.0 + 0.18 * a;
+    let r = sqrt(a * a + (b / width) * (b / width));
+    return 1.0 - smoothstep(0.75, 1.0, r);
+}
+
+@fragment
+fn fs_snow_trail_update(in: RainWetOut) -> @location(0) vec4<f32> {
+    let size = f32(textureDimensions(snow_trail).x);
+    let extent = frame.snow_trail.z;
+    if (extent <= 0.0) { return vec4<f32>(0.0); }
+    let xy = frame.snow_trail.xy + in.clip.xy / size * extent;
+    let step = frame.snow_trail_step;
+    var pressed = 0.0;
+    if (step.z >= 0.0) {
+        let uv = (xy - step.xy) / extent;
+        if (all(uv >= vec2<f32>(0.0)) && all(uv < vec2<f32>(1.0))) {
+            pressed = textureLoad(snow_trail, vec2<i32>(uv * size), 0).r;
+            // falling snow fills them in
+            pressed *= exp(-step.z * step.w / 240.0);
+        }
+    }
+    let count = i32(frame.snow_trail.w + 0.5);
+    for (var i = 0; i < 16; i++) {
+        if (i >= count) { break; }
+        pressed = max(pressed, snow_trail_stamp(xy, frame.snow_stamps[i]));
+    }
+    return vec4<f32>(pressed, 0.0, 0.0, 1.0);
+}
+
+// How deep the snow is pressed at `xy` (0..1), and its slope there (the
+// dent's walls), from the footprints' map; none outside it.
+fn snow_pressed(xy: vec2<f32>) -> vec3<f32> {
+    let extent = frame.snow_trail.z;
+    if (extent <= 0.0) { return vec3<f32>(0.0); }
+    let uv = (xy - frame.snow_trail.xy) / extent;
+    if (any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0))) { return vec3<f32>(0.0); }
+    let texel = 1.0 / f32(textureDimensions(snow_trail).x);
+    let c = textureSampleLevel(snow_trail, lin_clamp, uv, 0.0).r;
+    let px = textureSampleLevel(snow_trail, lin_clamp, uv + vec2<f32>(texel, 0.0), 0.0).r;
+    let mx = textureSampleLevel(snow_trail, lin_clamp, uv - vec2<f32>(texel, 0.0), 0.0).r;
+    let py = textureSampleLevel(snow_trail, lin_clamp, uv + vec2<f32>(0.0, texel), 0.0).r;
+    let my = textureSampleLevel(snow_trail, lin_clamp, uv - vec2<f32>(0.0, texel), 0.0).r;
+    return vec3<f32>(c, (px - mx) * 0.5, (py - my) * 0.5);
 }
 
 // Snow over what the wet pass drew there (premultiplied, over).

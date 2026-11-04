@@ -27,6 +27,10 @@ pub enum WeatherQuality {
 /// Puddle view distance, metres: the range of the slider and its default.
 pub const PUDDLE_DISTANCE: std::ops::RangeInclusive<f32> = 10.0..=60.0;
 pub const PUDDLE_DISTANCE_DEFAULT: f32 = 38.0;
+/// How far snow lying on the ground is drawn, metres: the slider's range
+/// and its default.
+pub const SNOW_DISTANCE: std::ops::RangeInclusive<f32> = 20.0..=120.0;
+pub const SNOW_DISTANCE_DEFAULT: f32 = 60.0;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -61,6 +65,10 @@ pub struct WeatherSettings {
     /// How big the snowflakes are, 0 (fine powder) to 1 (big wet flakes);
     /// 0.5 is the middle.
     pub snow_size: f32,
+    /// Snow settles on the ground (snow only), building up as it falls.
+    pub snow_settles: bool,
+    /// How far the snow lying on the ground is drawn (m).
+    pub snow_distance: f32,
     pub quality: WeatherQuality,
     /// The menu was used this session: `AURORA_RAIN` no longer applies.
     #[serde(skip)]
@@ -82,6 +90,8 @@ impl Default for WeatherSettings {
             thunder_frequency: 0.5,
             region_weather: false,
             snow_size: 0.5,
+            snow_settles: true,
+            snow_distance: SNOW_DISTANCE_DEFAULT,
             quality: WeatherQuality::High,
             touched: false,
         }
@@ -176,9 +186,15 @@ impl WeatherSettings {
 
     /// What the renderer needs besides the rain's strength.
     pub fn rain_look(&self, wind: &Wind) -> aurora_render::RainLook {
+        // in snow, the puddles' switch and distance are the lying snow's
+        let snowing = self.snowing();
         aurora_render::RainLook {
-            puddles: self.puddles,
-            distance: self.puddle_distance.clamp(*PUDDLE_DISTANCE.start(), *PUDDLE_DISTANCE.end()),
+            puddles: if snowing { self.snow_settles } else { self.puddles },
+            distance: if snowing {
+                self.snow_distance.clamp(*SNOW_DISTANCE.start(), *SNOW_DISTANCE.end())
+            } else {
+                self.puddle_distance.clamp(*PUDDLE_DISTANCE.start(), *PUDDLE_DISTANCE.end())
+            },
             wind: wind.now.to_array(),
             drift: wind.drift.to_array(),
             snow: if self.snowing() { self.flake_scale() } else { 0.0 },

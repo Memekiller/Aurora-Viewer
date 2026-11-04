@@ -130,6 +130,22 @@ fn weather(cx: &mut Cx) {
                 " m",
             );
         });
+        // the snow lying, and behind its cog how far it is drawn
+        cx.toggle(
+            tr!("ui-weather-snow-settles"),
+            tr!("ui-weather-snow-settles-tip"),
+            &field!(weather.snow_settles),
+        );
+        let no_snow = !cx.s.weather.snow_settles;
+        cx.subs(no_snow, |cx| {
+            cx.slider_whole(
+                tr!("ui-weather-snow-distance"),
+                tr!("ui-weather-snow-distance-tip"),
+                &field!(weather.snow_distance),
+                crate::weather::SNOW_DISTANCE,
+                " m",
+            );
+        });
         cx.toggle(
             tr!("ui-weather-region"),
             tr!("ui-weather-region-tip"),

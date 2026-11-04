@@ -1258,9 +1258,10 @@ pub struct OverlayEffect {
 /// Rain prototype: the weather settings the wet ground follows.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RainLook {
-    /// Puddles gather on level ground.
+    /// Puddles gather on level ground; in snow, the snow settles.
     pub puddles: bool,
-    /// How far the wet ground and its puddles are drawn (m).
+    /// How far the wet ground and its puddles are drawn (m); in snow, the
+    /// snow lying.
     pub distance: f32,
     /// The wind now (m/s): the drops' slant.
     pub wind: [f32; 2],

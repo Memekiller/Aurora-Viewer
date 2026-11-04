@@ -876,6 +876,30 @@ fn weather_section(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
                 );
                 ui.add(egui::Slider::new(&mut w.snow_size, 0.0..=1.0).show_value(false));
             });
+            // the snow lying on the ground, and how far it is drawn
+            ui.horizontal(|ui| {
+                row_label(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-weather-snow-settles"),
+                    aurora_i18n::tr!("ui-weather-snow-settles-tip"),
+                );
+                widgets::checkbox(ui, p, &mut w.snow_settles, "");
+            });
+            ui.horizontal(|ui| {
+                row_label(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-weather-snow-distance"),
+                    aurora_i18n::tr!("ui-weather-snow-distance-tip"),
+                );
+                ui.add_enabled(
+                    w.snow_settles,
+                    egui::Slider::new(&mut w.snow_distance, crate::weather::SNOW_DISTANCE)
+                        .step_by(1.0)
+                        .suffix(" m"),
+                );
+            });
         }
         // the puddles and how far the wet ground goes
         if !snowing {

@@ -2485,7 +2485,11 @@ fn snow_lying(world: vec3<f32>) -> f32 {
     let offs = array<vec2<i32>, 4>(vec2<i32>(0, 0), vec2<i32>(1, 0), vec2<i32>(0, 1), vec2<i32>(1, 1));
     for (var k = 0; k < 4; k++) {
         let s = textureLoad(rain_wetness, i + offs[k], 0);
-        w[k] = smoothstep(-0.3, -0.05, world.z - s.x) * s.z;
+        // on the surface the snow landed on, not above it: what stands
+        // there and is not in the shelter map (avatars, what moves) stays
+        // clear
+        let at = world.z - s.x;
+        w[k] = smoothstep(-0.3, -0.05, at) * (1.0 - smoothstep(0.25, 0.6, at)) * s.z;
     }
     return mix(mix(w.x, w.y, f.x), mix(w.z, w.w, f.x), f.y);
 }
@@ -2508,11 +2512,14 @@ fn snow_noise(p: vec2<f32>) -> f32 {
 // a white blanket; lit by the sky, the sun (with its shadows) and the
 // lamps, a few glints toward the sun. `n`: the smooth facing.
 fn snow_cover(clip: vec2<f32>, world: vec3<f32>, n: vec3<f32>) -> vec4<f32> {
+    // "Snow settles" off (in snow, rain_look.x): none drawn
+    if (snowing() && frame.rain_look.x < 0.5) { return vec4<f32>(0.0); }
     let depth = snow_lying(world + n * 0.05);
     if (depth <= 0.002) { return vec4<f32>(0.0); }
     let cam = frame.camera_pos.xyz;
     let dist = distance(world, cam);
-    let far = frame.rain_look.y * 2.0;
+    // its distance in snow (rain_look.y); twice the puddles' while melting
+    let far = select(frame.rain_look.y * 2.0, frame.rain_look.y, snowing());
     let slope = smoothstep(0.55, 0.85, n.z);
     let lying = depth * slope;
     if (lying <= 0.002) { return vec4<f32>(0.0); }

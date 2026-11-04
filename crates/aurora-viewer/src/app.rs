@@ -10484,10 +10484,11 @@ impl App {
         // rain prototype: while it rains, and while the ground dries after
         // (the renderer's wetness memory: about 8 minutes), the terrain
         // heights and the G-buffer stay
-        if self.weather_now.rain() > 0.0 {
+        // (rain or snow: snow lies and melts for longer, about 15 minutes)
+        if self.weather_now.fall() > 0.0 {
             self.rain_last = Some(Instant::now());
         }
-        let raining = self.rain_last.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(600));
+        let raining = self.rain_last.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(1500));
         self.scene.update_rain_ground(&self.world, fp.camera_pos, raining);
         let lists = if self.in_world() && !self.scene.textures.drawing_paused() {
             &self.scene.lists

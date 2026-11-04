@@ -175,6 +175,9 @@ struct FrameU {
     /// Rain prototype's wind: xy how far it has carried the drops (m), zw
     /// the wind now (m/s).
     rain_wind: [f32; 4],
+    /// Snow cover: x how hard it snows (0..1), y how deep the snow lies on
+    /// a place new to the memory (0..1), z 1 while rain melts it.
+    snow_cover: [f32; 4],
 }
 
 /// Must match `ShadowParams` in object.wgsl.
@@ -2023,8 +2026,13 @@ struct RainWet {
     last: Option<Instant>,
     level: f32,
     soak: f32,
+    /// How deep the snow lies in the open (0..1): it builds while it snows
+    /// and melts after, the faster in rain (the memory's places new to it
+    /// take it, as `soak`).
+    snow: f32,
     uniform: [f32; 4],
     step: [f32; 4],
+    snow_cover: [f32; 4],
 }
 
 const RAIN_WET_EXTENT: f32 = 128.0;
@@ -2037,14 +2045,20 @@ const RAIN_DRY_SECS: f32 = 120.0;
 /// How fast the standing water fills (s, at full rain) and drains (s).
 const RAIN_FILL_SECS: f32 = 25.0;
 const RAIN_DRAIN_SECS: f32 = 150.0;
+/// How fast snow builds to a full cover (s, at full snow: a dusting in a
+/// minute, white in about five), and melts after (s; in rain, faster).
+const SNOW_FILL_SECS: f32 = 150.0;
+const SNOW_MELT_SECS: f32 = 900.0;
+const SNOW_RAIN_MELT_SECS: f32 = 120.0;
 
 impl RainWet {
     fn active(&self) -> bool {
-        (self.soak > RAIN_WET_DRY || self.level > RAIN_WET_DRY) && self.last.is_some()
+        (self.soak > RAIN_WET_DRY || self.level > RAIN_WET_DRY || self.snow > RAIN_WET_DRY) && self.last.is_some()
     }
 
-    /// One frame of a rain of `rain` with the camera at `at`.
-    fn advance(&mut self, rain: f32, at: Vec2) {
+    /// One frame of a rain of `rain` and a snow of `snow` with the camera at
+    /// `at`.
+    fn advance(&mut self, rain: f32, snow: f32, at: Vec2) {
         let now = Instant::now();
         let dt = self.last.map_or(0.0, |t| now.duration_since(t).as_secs_f32().min(1.0));
         let rain = rain.clamp(0.0, 1.0);
@@ -2060,8 +2074,25 @@ impl RainWet {
         } else {
             self.soak *= (-dt / RAIN_DRY_SECS).exp();
         }
+        let snow = snow.clamp(0.0, 1.0);
+        // AURORA_SNOW_LYING=<0..1>: snow already lying that deep while it
+        // snows (demo captures, without waiting for it to build)
+        static LYING: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+        let lying = *LYING.get_or_init(|| std::env::var("AURORA_SNOW_LYING").ok().and_then(|v| v.parse::<f32>().ok()));
+        if snow > 0.0
+            && let Some(v) = lying
+        {
+            self.snow = self.snow.max(v.clamp(0.0, 1.0));
+        }
+        if snow > 0.0 {
+            self.snow += (1.0 - self.snow) * (1.0 - (-dt * snow / SNOW_FILL_SECS).exp());
+            self.snow = self.snow.max(1e-3);
+        } else {
+            let melt = if rain > 0.0 { SNOW_RAIN_MELT_SECS } else { SNOW_MELT_SECS };
+            self.snow *= (-dt / melt).exp();
+        }
         let was = self.origin;
-        let active = rain > 0.0 || self.soak > RAIN_WET_DRY || self.level > RAIN_WET_DRY;
+        let active = rain > 0.0 || snow > 0.0 || self.soak > RAIN_WET_DRY || self.level > RAIN_WET_DRY || self.snow > RAIN_WET_DRY;
         if !active {
             *self = RainWet::default();
             return;
@@ -2072,6 +2103,7 @@ impl RainWet {
         let prev = was.unwrap_or(origin);
         self.uniform = [origin.x, origin.y, RAIN_WET_EXTENT, self.level];
         self.step = [prev.x, prev.y, if fresh { -1.0 } else { dt }, self.soak];
+        self.snow_cover = [snow, self.snow, if rain > 0.0 { 1.0 } else { 0.0 }, 0.0];
         self.last = Some(now);
     }
 }
@@ -3793,7 +3825,7 @@ impl Backend {
             depth_write: false,
             depth_compare: wgpu::CompareFunction::Always,
             samples: 1,
-            format: Some(wgpu::TextureFormat::Rg32Float),
+            format: Some(wgpu::TextureFormat::Rgba32Float),
             depth_format: None,
             ..base("rain wetness", "vs_rain_wet", "fs_rain_wet_update")
         });
@@ -5484,6 +5516,7 @@ impl Backend {
         u.rain = [f.rain.clamp(0.0, 1.0), area[0], area[1], area[2]];
         u.rain_wet = self.rain_wet.uniform;
         u.rain_wet_step = self.rain_wet.step;
+        u.snow_cover = self.rain_wet.snow_cover;
         u.rain_look = [
             f32::from(u8::from(f.rain_look.puddles)),
             f.rain_look.distance,
@@ -6165,9 +6198,9 @@ impl Backend {
         // rain prototype: the terrain heights (and where they are, for the
         // uniforms below)
         self.water_effects.upload_rain_ground(&self.queue, &lists.rain_ground);
-        // snow wets nothing: the ground dries as after rain
-        self.rain_wet
-            .advance(if f.rain_look.snow > 0.0 { 0.0 } else { f.rain }, f.camera_pos.truncate());
+        // snow wets nothing (the ground dries as after rain), it lies
+        let (rain, snow) = if f.rain_look.snow > 0.0 { (0.0, f.rain) } else { (f.rain, 0.0) };
+        self.rain_wet.advance(rain, snow, f.camera_pos.truncate());
         let mut main = self.frame_uniforms(fu, fu.view, Some(fu.camera_pos), &cascades, &splits);
         main.cam_up[3] = camera_water_level;
         {

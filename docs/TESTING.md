@@ -3616,6 +3616,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_AA_SWITCH=<frame>:<mode>[,…]` | Anti-aliasing changed at these frames, as Preferences would |
 | `AURORA_RAIN=<0..1>` | Rain of this strength until the Weather section is used |
 | `AURORA_SNOW=<0..1>` | Snow of this strength until the Weather section is used |
+| `AURORA_SNOW_LYING=<0..1>` | Snow already lying this deep while it snows |
 | `AURORA_RAIN_SPEED=<scale>` | Raindrops' speed relative to their real fall speed (prototype tuning) |
 | `AURORA_RAIN_DEBUG=1` | Rain's wetness memory drawn in colours over the ground |
 | `AURORA_RAIN_PARTICLES=<0..1>` | The first rain prototype, on particles (to be removed) |
@@ -3628,7 +3629,10 @@ both open states and the selection count. Capture at frame 620.
   Environment window's Weather section is drawn for this viewer only.
   `AURORA_RAIN=<0..1>` sets the rain (0 none, 1 a downpour) for captures
   and stays until the section is touched in that session, and
-  `AURORA_SNOW=<0..1>` snow the same way (it wins over `AURORA_RAIN`); the
+  `AURORA_SNOW=<0..1>` snow the same way (it wins over `AURORA_RAIN`), and
+  `AURORA_SNOW_LYING=<0..1>` starts it with that much snow on the ground
+  (it builds over minutes otherwise: a dusting, then a white cover on what
+  faces up, none on walls or steep roofs); the
   wind, the
   puddles, the thunder and the quality come from the settings.
   `AURORA_RAIN_SPEED=<scale>` (0.1 to 4, default 1) scales the drops' fall

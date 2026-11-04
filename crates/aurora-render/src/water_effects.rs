@@ -394,7 +394,8 @@ impl WaterGpu {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rg32Float,
+                // x the height reached, y how wet, z how deep the snow lies
+                format: wgpu::TextureFormat::Rgba32Float,
                 usage,
                 view_formats: &[],
             })

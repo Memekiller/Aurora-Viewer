@@ -2177,6 +2177,7 @@ fn fs_rain_wet_update(in: RainWetOut) -> @location(0) vec4<f32> {
     let dt = max(step.z, 0.0);
     var wet_h = 1e9;
     var amount = 0.0;
+    var snow_depth = 0.0;
     var known = false;
     if (step.z >= 0.0) {
         let uv = (xy - step.xy) / extent;
@@ -2184,43 +2185,48 @@ fn fs_rain_wet_update(in: RainWetOut) -> @location(0) vec4<f32> {
             let s = textureLoad(rain_wetness, vec2<i32>(uv * size), 0);
             wet_h = s.x;
             amount = s.y;
+            snow_depth = s.z;
             known = true;
         }
     }
+    // what falls (rain or snow) moves the height it reaches; only rain wets
+    let falling = frame.rain.x;
     let heavy = rain_liquid();
     // slanted in the wind: ground in the lee of cover stays dry
     let top = rain_reached_height(xy, frame.camera_pos.z);
     if (!known) {
-        // new here (the camera came this way): as wet as everywhere else
-        // in the open, raining or drying, as if it had been seen all along
+        // new here (the camera came this way): as wet, and as snowed on, as
+        // everywhere else in the open, as if it had been seen all along
         wet_h = select(-1e9, top, top > -1e8);
         amount = step.w;
+        snow_depth = frame.snow_cover.y;
     } else if (wet_h < -1e8 && top > -1e8) {
         // only assumed open so far (it came in beyond the shelter map's
         // reach): its first real look decides, at once
         wet_h = top;
-        if (heavy > 0.0) {
-            amount += (1.0 - amount) * (1.0 - exp(-dt * (0.5 + heavy) / 8.0));
+    } else if (falling > 0.0 && top > -1e8) {
+        if (top < wet_h) {
+            // something lower opened to the sky: reached from now
+            wet_h = top;
         } else {
-            amount *= exp(-dt / 120.0);
+            // cover that stays: what is under it dries, slowly
+            wet_h += (top - wet_h) * (1.0 - exp(-dt / 30.0));
         }
-    } else if (heavy > 0.0) {
-        {
-            if (top > -1e8) {
-                if (top < wet_h) {
-                    // something lower opened to the sky: wet from now
-                    wet_h = top;
-                } else {
-                    // cover that stays: what is under it dries, slowly
-                    wet_h += (top - wet_h) * (1.0 - exp(-dt / 30.0));
-                }
-            }
-            amount += (1.0 - amount) * (1.0 - exp(-dt * (0.5 + heavy) / 8.0));
-        }
+    }
+    if (heavy > 0.0) {
+        amount += (1.0 - amount) * (1.0 - exp(-dt * (0.5 + heavy) / 8.0));
     } else {
         amount *= exp(-dt / 120.0);
     }
-    return vec4<f32>(wet_h, amount, 0.0, 1.0);
+    // the snow: it builds where it falls (the place's reached surface is
+    // its topmost, so cover keeps it off), melts after it stops, the faster
+    // in rain, which wets what it leaves
+    if (snowing() && falling > 0.0 && top > -1e8 && wet_h <= top + 0.05) {
+        snow_depth += (1.0 - snow_depth) * (1.0 - exp(-dt * falling / 150.0));
+    } else {
+        snow_depth *= exp(-dt / select(900.0, 120.0, frame.snow_cover.z > 0.5));
+    }
+    return vec4<f32>(wet_h, amount, snow_depth, 1.0);
 }
 
 // How wet the surface at `world` is from the memory (0..1, blended between
@@ -2464,6 +2470,76 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
     return vec4<f32>(color * a, a);
 }
 
+// The snow lying at `world` from the memory (0..1, blended between cells);
+// none outside it, or below the height the snow reaches there (under
+// cover).
+fn snow_lying(world: vec3<f32>) -> f32 {
+    let extent = frame.rain_wet.z;
+    if (extent <= 0.0) { return 0.0; }
+    let size = textureDimensions(rain_wetness).x;
+    let pos = (world.xy - frame.rain_wet.xy) / extent * f32(size) - 0.5;
+    if (any(pos < vec2<f32>(0.0)) || any(pos > vec2<f32>(f32(size - 1u)))) { return 0.0; }
+    let i = vec2<i32>(floor(pos));
+    let f = fract(pos);
+    var w = vec4<f32>(0.0);
+    let offs = array<vec2<i32>, 4>(vec2<i32>(0, 0), vec2<i32>(1, 0), vec2<i32>(0, 1), vec2<i32>(1, 1));
+    for (var k = 0; k < 4; k++) {
+        let s = textureLoad(rain_wetness, i + offs[k], 0);
+        w[k] = smoothstep(-0.3, -0.05, world.z - s.x) * s.z;
+    }
+    return mix(mix(w.x, w.y, f.x), mix(w.z, w.w, f.x), f.y);
+}
+
+// Smooth value noise (0..1) for the snow's patches.
+fn snow_noise(p: vec2<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let a = rain_rand(rain_hash(bitcast<u32>(i32(i.x)) * 73856093u ^ bitcast<u32>(i32(i.y)) * 19349663u));
+    let b = rain_rand(rain_hash(bitcast<u32>(i32(i.x + 1.0)) * 73856093u ^ bitcast<u32>(i32(i.y)) * 19349663u));
+    let c = rain_rand(rain_hash(bitcast<u32>(i32(i.x)) * 73856093u ^ bitcast<u32>(i32(i.y + 1.0)) * 19349663u));
+    let d = rain_rand(rain_hash(bitcast<u32>(i32(i.x + 1.0)) * 73856093u ^ bitcast<u32>(i32(i.y + 1.0)) * 19349663u));
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+// Snow cover, premultiplied: it lies on what faces up, thinning on slopes
+// and gone past about 55° (it slides off: walls and steep roofs stay bare),
+// first as a patchy dusting (the noise: grass tips, the high spots), then
+// a white blanket; lit by the sky, the sun (with its shadows) and the
+// lamps, a few glints toward the sun. `n`: the smooth facing.
+fn snow_cover(clip: vec2<f32>, world: vec3<f32>, n: vec3<f32>) -> vec4<f32> {
+    let depth = snow_lying(world + n * 0.05);
+    if (depth <= 0.002) { return vec4<f32>(0.0); }
+    let cam = frame.camera_pos.xyz;
+    let dist = distance(world, cam);
+    let far = frame.rain_look.y * 2.0;
+    let slope = smoothstep(0.55, 0.85, n.z);
+    let lying = depth * slope;
+    if (lying <= 0.002) { return vec4<f32>(0.0); }
+    let patches = snow_noise(world.xy * 2.3) * 0.65 + snow_noise(world.xy * 9.1) * 0.35;
+    var cover = smoothstep(patches * 0.9, patches * 0.9 + 0.25, lying * 1.3);
+    cover *= 1.0 - smoothstep(far * 0.8, far, dist);
+    if (cover <= 0.002) { return vec4<f32>(0.0); }
+    let view = normalize(cam - world);
+    let ambient = frame.sky_zenith.rgb * 0.6 + frame.sky_horizon.rgb * 0.4;
+    let lit_sun = max(dot(n, frame.sun_dir.xyz), 0.0) * frame.sun_dir.w;
+    let shade = shadow_factor(world, n, dist);
+    let sun = frame.sun_color.rgb * lit_sun * shade;
+    let lamps = rain_lamps(world, clip, view);
+    // glints: a few tiny facets of ice turned toward the sun
+    let cell = floor(world.xy * 60.0);
+    let g = rain_rand(rain_hash(bitcast<u32>(i32(cell.x)) * 2654435761u ^ bitcast<u32>(i32(cell.y))));
+    let half = normalize(frame.sun_dir.xyz + view);
+    let glint = step(0.985, g) * pow(max(dot(n, half), 0.0), 40.0) * frame.sun_color.rgb * shade * 2.0;
+    let color = (ambient * 0.95 + sun * 0.9 + lamps * 0.6) * 0.92 + glint;
+    return vec4<f32>(apply_fog(color, world) * cover, cover);
+}
+
+// Snow over what the wet pass drew there (premultiplied, over).
+fn with_snow(wet: vec4<f32>, snow: vec4<f32>) -> vec4<f32> {
+    return vec4<f32>(snow.rgb + wet.rgb * (1.0 - snow.a), snow.a + wet.a * (1.0 - snow.a));
+}
+
 // Without the G-buffer (screen-space reflections off): the depth's facing,
 // near-level ground only, a middling porosity.
 @fragment
@@ -2474,7 +2550,8 @@ fn fs_rain_wet(in: RainWetOut) -> @location(0) vec4<f32> {
     let world = world_from_depth(uv, depth);
     if (world.z < frame.params.y) { discard; }
     if (rain_debug > 0.5) { return rain_debug_color(world); }
-    let out = rain_wet_surface(in.clip.xy, uv, world, rain_depth_normal(uv, world), 0.6, true, 1.0);
+    let n = rain_depth_normal(uv, world);
+    let out = with_snow(rain_wet_surface(in.clip.xy, uv, world, n, 0.6, true, 1.0), snow_cover(in.clip.xy, world, n));
     if (out.a < 0.01) { discard; }
     return out;
 }
@@ -2548,7 +2625,8 @@ fn fs_rain_wet_g(in: RainWetOut) -> @location(0) vec4<f32> {
     let cleared = abs(g.x - 0.5) < 0.004 && abs(g.y - 0.5) < 0.004 && g.z > 0.996 && g.w < 0.004;
     var out: vec4<f32>;
     if (cleared) {
-        out = rain_wet_surface(in.clip.xy, uv, world, rain_depth_normal(uv, world), 0.6, true, 1.0);
+        let flat_n = rain_depth_normal(uv, world);
+        out = with_snow(rain_wet_surface(in.clip.xy, uv, world, flat_n, 0.6, true, 1.0), snow_cover(in.clip.xy, world, flat_n));
     } else {
         var n = rain_oct_decode(g.xy);
         if (dot(n, frame.camera_pos.xyz - world) < 0.0) { n = -n; }
@@ -2562,7 +2640,7 @@ fn fs_rain_wet_g(in: RainWetOut) -> @location(0) vec4<f32> {
         // normal map's bevels on level ground do not punch holes
         let around = rain_build_level(uv, world, n);
         let level = min(around, n.z + 0.1);
-        out = rain_wet_surface(in.clip.xy, uv, world, n, porosity, false, level);
+        out = with_snow(rain_wet_surface(in.clip.xy, uv, world, n, porosity, false, level), snow_cover(in.clip.xy, world, n));
     }
     if (out.a < 0.01) { discard; }
     return out;

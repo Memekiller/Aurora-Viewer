@@ -5236,6 +5236,13 @@ impl App {
         fp.sky_horizon += white * k * 0.5;
         fp.ground_color += white * k * 0.2;
         fp.fog_color += white * k * 0.15;
+        // the world and the sky are lit from the environment's sky settings
+        // (EEP): the flash lights the scene all round (its ambient), the
+        // clouds from inside and the sky's haze at the horizon (`glow` is
+        // the sun's halo shape there, not a colour)
+        fp.sky.ambient += white * k * 0.9;
+        fp.sky.cloud_color += white * k * 1.2;
+        fp.sky.blue_horizon += white * k * 0.25;
     }
 
     /// The weather in effect: the Weather settings; or an environment

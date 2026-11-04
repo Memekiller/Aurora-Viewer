@@ -98,11 +98,13 @@ pub struct ThunderInput {
     pub audible: bool,
 }
 
-/// One strike's flash: its strokes (when after the strike, how bright),
-/// and the bolt seen, if any.
+/// One strike's flash: the stepped leader's time (s: the bolt grows down
+/// from the cloud, faint, before the first stroke), its strokes (when after
+/// the strike, how bright), and the bolt seen, if any.
 #[derive(Debug, Clone)]
 struct Flash {
     at: Instant,
+    leader: f32,
     strokes: Vec<(f32, f32)>,
     bolt: Option<Bolt>,
 }
@@ -145,6 +147,8 @@ pub struct Thunder {
     flashes: Vec<Flash>,
     claps: Vec<Clap>,
     played: u64,
+    /// A storm was on the frame before.
+    was_active: bool,
     /// How bright the lightning is now (0: none; about 1 for a strike a
     /// kilometre away).
     pub flash: f32,
@@ -162,6 +166,7 @@ impl Default for Thunder {
             flashes: Vec::new(),
             claps: Vec::new(),
             played: 0,
+            was_active: false,
             flash: 0.0,
         }
     }
@@ -257,14 +262,21 @@ impl Thunder {
         let bright = (1400.0 / (400.0 + d)).clamp(0.15, 1.6);
         let n = 2 + (self.rand() * 2.99) as usize;
         let mut strokes = Vec::with_capacity(n);
-        let mut t = 0.0;
+        // the leader comes down in 50 to 120 ms, then the strokes
+        let leader = 0.05 + self.rand() * 0.07;
+        let mut t = leader;
         for i in 0..n {
             let amp = if i == 0 { 1.0 } else { 0.4 + self.rand() * 0.6 };
             strokes.push((t, amp * bright));
             t += 0.04 + self.rand() * 0.14;
         }
         let bolt = (d <= BOLT_FARTHEST && self.rand() < 0.85).then(|| self.bolt(from, d));
-        self.flashes.push(Flash { at: now, strokes, bolt });
+        self.flashes.push(Flash {
+            at: now,
+            leader,
+            strokes,
+            bolt,
+        });
         // the thunder: a crack near, a roll farther, the far roll far off;
         // quieter and duller with the distance
         let r = self.rand();
@@ -296,7 +308,12 @@ impl Thunder {
             let _ = clips();
             match self.next {
                 None => {
-                    let wait = -self.rand().max(1e-4).ln() * Self::mean_interval(input.rain, input.frequency);
+                    let mut wait = -self.rand().max(1e-4).ln() * Self::mean_interval(input.rain, input.frequency);
+                    // a storm just begun (Thunder switched on, the rain grown
+                    // heavy enough): its first strike within a few seconds
+                    if !self.was_active {
+                        wait = wait.min(3.0 + self.rand() * 5.0);
+                    }
                     self.next = Some(now + Duration::from_secs_f32(wait.clamp(SHORTEST_WAIT, 480.0)));
                 }
                 Some(t) if now >= t => {
@@ -308,6 +325,7 @@ impl Thunder {
         } else {
             self.next = None;
         }
+        self.was_active = active;
 
         // the flash: each stroke lit at once, fading in about a tenth of a
         // second, and a dimmer glow of the clouds after
@@ -359,20 +377,24 @@ impl Thunder {
             }
         }
     }
-    /// The bolts seen now, as glowing ribbon segments for the particle pass:
+    /// The bolts seen now, as glowing line segments for the particle pass:
     /// `eye` the camera, `ground` the height of the ground far off (m),
     /// `reach` how far the frame draws (m). A bolt farther than that is
-    /// drawn nearer at the same size in the view, so that it stands in the
-    /// sky where it struck.
+    /// drawn just inside it at the same size in the view (by its farthest
+    /// point, its top), so that it stands in the sky where it struck, behind
+    /// everything the frame draws; the farther it struck, the dimmer and
+    /// the more it is greyed by the air between.
     pub fn bolts(&self, now: Instant, eye: Vec3, ground: f32, reach: f32, out: &mut Vec<ParticleInstance>) {
         for f in &self.flashes {
             let Some(bolt) = &f.bolt else {
                 continue;
             };
             let t = now.saturating_duration_since(f.at).as_secs_f32();
-            // each stroke lights the channel at once and it fades in a few
+            // the leader: segments lit as it comes down, faint; then each
+            // stroke lights the channel at once and it fades in a few
             // hundredths of a second, with a faint afterglow; the forks only
             // with the first
+            let top = bolt.segments.first().map_or(1.0, |s| s.a.z.max(1.0));
             let (mut main, mut fork) = (0.0f32, 0.0f32);
             for (i, &(at, amp)) in f.strokes.iter().enumerate() {
                 if t >= at {
@@ -384,46 +406,62 @@ impl Thunder {
                     }
                 }
             }
-            if main < 0.02 {
+            let leading = t < f.leader;
+            if !leading && main < 0.02 {
                 continue;
             }
             let across = bolt.from.perp();
             let base = Vec3::new(eye.x + bolt.from.x * bolt.distance, eye.y + bolt.from.y * bolt.distance, ground);
             let world = |p: Vec3| base + (across * p.x + bolt.from * p.y).extend(p.z);
-            // by its farthest point (its top, a kilometre or two up), so
-            // that none of it is beyond the frame's far end
             let farthest = bolt
                 .segments
                 .iter()
                 .map(|s| world(s.a).distance(eye).max(world(s.b).distance(eye)))
                 .fold(1.0f32, f32::max);
-            let scale = ((reach * 0.85) / farthest).min(1.0);
+            let scale = ((reach * 0.97) / farthest).min(1.0);
             let place = |p: Vec3| eye + (world(p) - eye) * scale;
+            // the air between: dimmer and greyer the farther
+            let air = (-bolt.distance / 3500.0).exp();
+            let dim = 0.35 + 0.65 * air;
+            let tint = |near: [u8; 3], far: [u8; 3]| {
+                let m = |a: u8, b: u8| (f32::from(b) + (f32::from(a) - f32::from(b)) * air) as u8;
+                [m(near[0], far[0]), m(near[1], far[1]), m(near[2], far[2])]
+            };
+            let core_rgb = tint([240, 242, 255], [185, 192, 225]);
+            let halo_rgb = tint([150, 160, 255], [130, 138, 190]);
             // a few metres wide where it struck, whatever the distance
             let width = (2.0 + bolt.distance * 0.0025) * scale;
             for s in &bolt.segments {
-                let lit = if s.fork { fork } else { main } * s.weight;
+                let lit = if leading {
+                    // the leader has reached this far down yet
+                    let reached = f.leader * (top - s.a.z.min(s.b.z)) / top;
+                    if t < reached { 0.0 } else { 0.25 }
+                } else if s.fork {
+                    fork
+                } else {
+                    main
+                } * s.weight
+                    * dim;
                 if lit < 0.02 {
                     continue;
                 }
                 let (a, b) = (place(s.a), place(s.b));
-                // each quad half again as long as its segment, so that the
-                // soft ends of neighbours overlap into one line
-                let axis = (b - a) * 2.5;
+                // a little longer than the segment, so that neighbours meet
+                let axis = (b - a) * 1.08;
                 let mid = (a + b) * 0.5;
                 let core = ParticleInstance {
                     pos: mid.to_array(),
                     texture: 0,
                     size: [width * s.weight.max(0.35), axis.length()],
-                    flags: particle_flags::EMISSIVE | particle_flags::ADDITIVE | particle_flags::AXIS,
-                    color: [235, 238, 255, (lit.min(1.0) * 255.0) as u8],
+                    flags: particle_flags::EMISSIVE | particle_flags::ADDITIVE | particle_flags::AXIS | particle_flags::LINE,
+                    color: [core_rgb[0], core_rgb[1], core_rgb[2], (lit.min(1.0) * 255.0) as u8],
                     axis: axis.to_array(),
                     glow: 2.0 * lit,
                 };
                 // and a wide violet-blue halo around it
                 let halo = ParticleInstance {
                     size: [width * 7.0 * s.weight.max(0.35), axis.length()],
-                    color: [150, 160, 255, (lit.min(1.0) * 90.0) as u8],
+                    color: [halo_rgb[0], halo_rgb[1], halo_rgb[2], (lit.min(1.0) * 90.0) as u8],
                     glow: 0.5 * lit,
                     ..core
                 };
@@ -455,7 +493,8 @@ mod tests {
         let t0 = Instant::now();
         let mut th = Thunder::default();
         th.strike(t0, Some(1715.0));
-        th.update(None, &input(0.0), t0 + Duration::from_millis(1));
+        // the stroke follows the leader (at most 120 ms)
+        th.update(None, &input(0.0), t0 + Duration::from_millis(125));
         assert!(th.flash > 0.5, "{}", th.flash);
         assert_eq!(th.claps.len(), 1);
         // 5 s for 1.7 km: still on its way at 4.9 s, gone at 5.1 s
@@ -518,8 +557,16 @@ mod tests {
         // drawn at once, nearer than the frame's reach, in its direction
         let eye = Vec3::new(128.0, 128.0, 30.0);
         let mut out = Vec::new();
+        // the leader first: only the top lit, faint
         th.bolts(t0 + Duration::from_millis(5), eye, 20.0, 256.0, &mut out);
-        assert!(!out.is_empty());
+        let leading = out.len();
+        out.clear();
+        th.bolts(t0 + Duration::from_millis(130), eye, 20.0, 256.0, &mut out);
+        assert!(
+            out.len() > leading,
+            "the whole bolt once the stroke comes: {leading} -> {}",
+            out.len()
+        );
         for i in &out {
             let p = Vec3::from_array(i.pos);
             assert!(p.distance(eye) < 256.0, "{p}");

@@ -100,68 +100,44 @@ fn environment(cx: &mut Cx) {
     });
 }
 
-/// A share of 0..1 shown as a percentage.
-fn share(ui: &mut egui::Ui, v: &mut f32) -> bool {
-    ui.spacing_mut().slider_width = super::super::SLIDER_W;
-    ui.add(
-        egui::Slider::new(v, 0.0..=1.0)
-            .custom_formatter(|v, _| format!("{:.0} %", v * 100.0))
-            .custom_parser(|t| aurora_i18n::parse_number(t.trim().trim_end_matches('%').trim()).map(|v| v / 100.0))
-            .trailing_fill(true),
-    )
-    .changed()
-}
 
-/// Graphics › Sky and environment › Weather: the weather of this viewer only
-/// (rain now, snow to come), the same settings as the Environment window's
-/// Weather section. The wind and the thunder are also listed in
-/// Preferences › Aurora, with the other differences from the Legacy Viewer.
+/// Graphics › Sky and environment › Aurora Weather: what the weather costs
+/// and what it lets regions do (the weather itself, what falls and how hard,
+/// is the Environment window's). Also listed in Preferences › Aurora, with
+/// the other differences from the Legacy Viewer.
 fn weather(cx: &mut Cx) {
-    use crate::weather::{PUDDLE_DISTANCE, Precipitation, WeatherQuality};
+    use crate::weather::{PUDDLE_DISTANCE, WeatherQuality};
     use aurora_i18n::tr;
     cx.aurora_group(tr!("ui-weather-aurora"), |cx| {
         cx.choice(
-            tr!("ui-weather-precipitation"),
-            tr!("ui-weather-precipitation-tip"),
-            &field!(weather.precipitation),
+            tr!("ui-weather-quality"),
+            tr!("ui-weather-quality-tip"),
+            &field!(weather.quality),
             &[
-                (Precipitation::Rain, tr!("ui-weather-rain"), false),
-                (Precipitation::Snow, tr!("ui-weather-snow"), false),
+                (WeatherQuality::Low, tr!("ui-weather-quality-low"), false),
+                (WeatherQuality::Medium, tr!("ui-weather-quality-medium"), false),
+                (WeatherQuality::High, tr!("ui-weather-quality-high"), false),
             ],
         );
-        cx.row(
-            tr!("ui-weather-amount"),
-            tr!("ui-weather-amount-tip"),
-            &field!(weather.amount),
-            |ui, s| share(ui, &mut s.weather.amount),
+        // the puddles, and behind their cog how far the wet ground goes
+        cx.toggle(tr!("ui-weather-puddles"), tr!("ui-weather-puddles-tip"), &field!(weather.puddles));
+        let no_puddles = !cx.s.weather.puddles;
+        cx.subs(no_puddles, |cx| {
+            cx.slider_whole(
+                tr!("ui-weather-distance"),
+                tr!("ui-weather-distance-tip"),
+                &field!(weather.puddle_distance),
+                PUDDLE_DISTANCE,
+                " m",
+            );
+        });
+        cx.toggle(
+            tr!("ui-weather-region"),
+            tr!("ui-weather-region-tip"),
+            &field!(weather.region_weather),
         );
-        cx.row(
-            tr!("ui-weather-wind"),
-            tr!("ui-weather-wind-tip"),
-            &field!(weather.wind_min),
-            |ui, s| {
-                let w = &mut s.weather;
-                let changed = share(ui, &mut w.wind_min);
-                if changed {
-                    w.wind_max = w.wind_max.max(w.wind_min);
-                }
-                changed
-            },
-        );
-        cx.row(
-            tr!("ui-weather-gusts"),
-            tr!("ui-weather-gusts-tip"),
-            &field!(weather.wind_max),
-            |ui, s| {
-                let w = &mut s.weather;
-                let changed = share(ui, &mut w.wind_max);
-                if changed {
-                    w.wind_min = w.wind_min.min(w.wind_max);
-                }
-                changed
-            },
-        );
-        cx.unfolded().toggle(
+        // the region's wind, and behind its cog the direction used instead
+        cx.toggle(
             tr!("ui-weather-wind-follow-region"),
             tr!("ui-weather-wind-follow-region-tip"),
             &field!(weather.wind_follow_region),
@@ -185,40 +161,6 @@ fn weather(cx: &mut Cx) {
                 },
             );
         });
-        cx.toggle(tr!("ui-weather-puddles"), tr!("ui-weather-puddles-tip"), &field!(weather.puddles));
-        cx.slider_whole(
-            tr!("ui-weather-distance"),
-            tr!("ui-weather-distance-tip"),
-            &field!(weather.puddle_distance),
-            PUDDLE_DISTANCE,
-            " m",
-        );
-        cx.unfolded()
-            .toggle(tr!("ui-weather-thunder"), tr!("ui-weather-thunder-tip"), &field!(weather.thunder));
-        let thunder_off = !cx.s.weather.thunder;
-        cx.subs(thunder_off, |cx| {
-            cx.row(
-                tr!("ui-weather-strikes"),
-                tr!("ui-weather-strikes-tip"),
-                &field!(weather.thunder_frequency),
-                |ui, s| share(ui, &mut s.weather.thunder_frequency),
-            );
-        });
-        cx.toggle(
-            tr!("ui-weather-region"),
-            tr!("ui-weather-region-tip"),
-            &field!(weather.region_weather),
-        );
-        cx.choice(
-            tr!("ui-weather-quality"),
-            tr!("ui-weather-quality-tip"),
-            &field!(weather.quality),
-            &[
-                (WeatherQuality::Low, tr!("ui-weather-quality-low"), false),
-                (WeatherQuality::Medium, tr!("ui-weather-quality-medium"), false),
-                (WeatherQuality::High, tr!("ui-weather-quality-high"), false),
-            ],
-        );
     });
 }
 

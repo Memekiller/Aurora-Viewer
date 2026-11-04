@@ -1882,6 +1882,7 @@ const PART_EMISSIVE: u32 = 1u;
 const PART_ADDITIVE: u32 = 2u;
 const PART_AXIS: u32 = 4u;
 const PART_FOLLOW_VELOCITY: u32 = 8u;
+const PART_LINE: u32 = 16u;
 
 struct PartIn {
     @location(0) pos: vec3<f32>,
@@ -1959,7 +1960,11 @@ fn fs_particle(in: PartOut) -> @location(0) vec4<f32> {
     // slot 0 is white: the default particle is a soft round dot
     let ts = sample_tex(in.texture, in.uv);
     var tex = vec4<f32>(srgb_to_linear(ts.rgb), ts.a);
-    if (in.texture == 0u) {
+    if ((in.flags & PART_LINE) != 0u) {
+        // a line's segment: soft across, even along (its neighbours carry on)
+        let a = clamp(1.0 - abs(in.uv.x * 2.0 - 1.0), 0.0, 1.0);
+        tex = vec4<f32>(1.0, 1.0, 1.0, a * a);
+    } else if (in.texture == 0u) {
         let d = length(in.uv * 2.0 - vec2<f32>(1.0));
         let a = clamp(1.0 - d, 0.0, 1.0);
         tex = vec4<f32>(1.0, 1.0, 1.0, a * a);

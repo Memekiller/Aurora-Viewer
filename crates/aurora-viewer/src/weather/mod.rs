@@ -55,8 +55,12 @@ pub struct WeatherSettings {
     /// How often lightning strikes, 0 (seldom) to 1 (often); 0.5 is the
     /// storm's own pace.
     pub thunder_frequency: f32,
-    /// Let regions set the weather through their environment. Not used yet.
+    /// Let regions set the weather through their environment
+    /// (weather/region.rs).
     pub region_weather: bool,
+    /// How big the snowflakes are, 0 (fine powder) to 1 (big wet flakes);
+    /// 0.5 is the middle.
+    pub snow_size: f32,
     pub quality: WeatherQuality,
     /// The menu was used this session: `AURORA_RAIN` no longer applies.
     #[serde(skip)]
@@ -77,6 +81,7 @@ impl Default for WeatherSettings {
             thunder: false,
             thunder_frequency: 0.5,
             region_weather: false,
+            snow_size: 0.5,
             quality: WeatherQuality::High,
             touched: false,
         }
@@ -121,14 +126,35 @@ impl WeatherSettings {
         self.rain()
     }
 
-    /// The amount the slider shows: `AURORA_RAIN` until the menu is used.
+    /// The amount the slider shows: `AURORA_SNOW` or `AURORA_RAIN` until
+    /// the menu is used.
     pub fn rain_or_amount(&self) -> f32 {
         if !self.touched
-            && let Some(v) = env_rain()
+            && let Some(v) = env_snow().or_else(env_rain)
         {
             return v;
         }
         self.amount
+    }
+
+    /// The menu is used for the first time: what `AURORA_SNOW` or
+    /// `AURORA_RAIN` showed becomes the setting, so that nothing changes
+    /// under the pointer (snow shown as snow, its amount kept).
+    pub fn take_over(&mut self, before: &WeatherSettings) {
+        if before.touched {
+            return;
+        }
+        if self.amount == before.amount {
+            self.amount = before.rain_or_amount();
+        }
+        if self.precipitation == before.precipitation && before.snowing() {
+            self.precipitation = Precipitation::Snow;
+        }
+    }
+
+    /// The flakes' size scale for the renderer (0.5 to 2, 1 in the middle).
+    pub fn flake_scale(&self) -> f32 {
+        0.5 * 4.0f32.powf(self.snow_size.clamp(0.0, 1.0))
     }
 
     /// The wind's range, lulls to gusts (0..1, the lower first).
@@ -155,7 +181,7 @@ impl WeatherSettings {
             distance: self.puddle_distance.clamp(*PUDDLE_DISTANCE.start(), *PUDDLE_DISTANCE.end()),
             wind: wind.now.to_array(),
             drift: wind.drift.to_array(),
-            snow: self.snowing(),
+            snow: if self.snowing() { self.flake_scale() } else { 0.0 },
             quality: match self.quality {
                 WeatherQuality::Low => 0,
                 WeatherQuality::Medium => 1,
@@ -281,7 +307,7 @@ mod tests {
         assert_eq!(w.rain(), 0.0);
         // but it falls: the drops pass draws it as snow
         assert_eq!(w.fall(), 0.7);
-        assert!(w.snowing() && w.rain_look(&Wind::default()).snow);
+        assert!(w.snowing() && w.rain_look(&Wind::default()).snow > 0.0);
         let read: WeatherSettings = serde_json::from_str("{\"amount\": 0.3}").expect("parse");
         assert!(read.puddles);
         assert_eq!(read.puddle_distance, PUDDLE_DISTANCE_DEFAULT);

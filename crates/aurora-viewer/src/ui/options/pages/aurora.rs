@@ -359,18 +359,12 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     Page::Graphics,
                     2,
                     &[
-                        "weather.precipitation",
-                        "weather.amount",
-                        "weather.wind_min",
-                        "weather.wind_max",
-                        "weather.wind_follow_region",
-                        "weather.wind_from",
+                        "weather.quality",
                         "weather.puddles",
                         "weather.puddle_distance",
-                        "weather.thunder",
-                        "weather.thunder_frequency",
                         "weather.region_weather",
-                        "weather.quality",
+                        "weather.wind_follow_region",
+                        "weather.wind_from",
                     ],
                 );
             });

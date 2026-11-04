@@ -842,6 +842,10 @@ pub mod particle_flags {
     pub const AXIS: u32 = 4;
     /// Velocity-oriented billboard: project its axis onto the viewing plane.
     pub const FOLLOW_VELOCITY: u32 = 8;
+    /// A segment of a line of light (the weather's lightning): with `AXIS`,
+    /// soft across its width only, so that segments end to end make one
+    /// unbroken line instead of a string of beads.
+    pub const LINE: u32 = 16;
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1262,8 +1266,9 @@ pub struct RainLook {
     /// drops and splashes, the distant rain's layers, the puddles' ring
     /// layers and their reflections).
     pub quality: u32,
-    /// What falls is snow: flakes instead of drops, nothing wets.
-    pub snow: bool,
+    /// What falls is snow, with the flakes' size scale (0.5 to 2; 0: rain):
+    /// flakes instead of drops, nothing wets.
+    pub snow: f32,
 }
 
 impl Default for RainLook {
@@ -1274,7 +1279,7 @@ impl Default for RainLook {
             wind: [0.0; 2],
             drift: [0.0; 2],
             quality: 2,
-            snow: false,
+            snow: 0.0,
         }
     }
 }

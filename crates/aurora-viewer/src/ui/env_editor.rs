@@ -700,14 +700,17 @@ impl EnvEditorUi {
                         }
                     });
                     ui.end_row();
-                    ui.label(tr!("ui-weather-thunder"));
-                    widgets::checkbox(ui, p, &mut w.thunder, "");
-                    ui.end_row();
-                    ui.label(tr!("ui-weather-strikes"));
-                    ui.add_enabled_ui(w.thunder, |ui| {
-                        ui.add(egui::Slider::new(&mut w.strikes, 0.0..=1.0).step_by(1.0 / 3.0).show_value(false));
-                    });
-                    ui.end_row();
+                    // thunder in rain only
+                    if w.precipitation == Precipitation::Rain {
+                        ui.label(tr!("ui-weather-thunder"));
+                        widgets::checkbox(ui, p, &mut w.thunder, "");
+                        ui.end_row();
+                        ui.label(tr!("ui-weather-strikes"));
+                        ui.add_enabled_ui(w.thunder, |ui| {
+                            ui.add(egui::Slider::new(&mut w.strikes, 0.0..=1.0).step_by(1.0 / 3.0).show_value(false));
+                        });
+                        ui.end_row();
+                    }
                 });
         });
         if on {

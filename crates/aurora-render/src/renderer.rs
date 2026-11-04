@@ -5488,7 +5488,7 @@ impl Backend {
             f32::from(u8::from(f.rain_look.puddles)),
             f.rain_look.distance,
             f.rain_look.quality.min(2) as f32,
-            f32::from(u8::from(f.rain_look.snow)),
+            if f.rain_look.snow > 0.0 { f.rain_look.snow.clamp(0.5, 2.0) } else { 0.0 },
         ];
         u.rain_wind = [f.rain_look.drift[0], f.rain_look.drift[1], f.rain_look.wind[0], f.rain_look.wind[1]];
         u.selection_color = f.selection_color;
@@ -6167,7 +6167,7 @@ impl Backend {
         self.water_effects.upload_rain_ground(&self.queue, &lists.rain_ground);
         // snow wets nothing: the ground dries as after rain
         self.rain_wet
-            .advance(if f.rain_look.snow { 0.0 } else { f.rain }, f.camera_pos.truncate());
+            .advance(if f.rain_look.snow > 0.0 { 0.0 } else { f.rain }, f.camera_pos.truncate());
         let mut main = self.frame_uniforms(fu, fu.view, Some(fu.camera_pos), &cascades, &splits);
         main.cam_up[3] = camera_water_level;
         {
@@ -8146,7 +8146,8 @@ impl Backend {
                 pass.draw(0..6, 0..rain_drops);
                 // splashes: 6 droplets of 6 vertices; up to 9,000 places
                 // (none in snow)
-                if !f.rain_look.snow {
+                // in snow: the flakes that land and melt
+                {
                     pass.set_pipeline(&self.pipelines.rain_splash);
                     pass.draw(0..36, 0..(f.rain.clamp(0.0, 1.0) * 9_000.0 * rain_share(f.rain_look.quality)) as u32);
                 }

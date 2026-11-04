@@ -702,14 +702,15 @@ fn weather_section(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
             );
             let rain = aurora_i18n::tr!("ui-weather-rain");
             let snow = aurora_i18n::tr!("ui-weather-snow");
-            let mut i = match w.precipitation {
-                Precipitation::Rain => 0,
-                Precipitation::Snow => 1,
-            };
+            // AURORA_SNOW shows as snow until the menu is used
+            let mut i = usize::from(w.snowing());
             if widgets::segmented(ui, p, &mut i, &[(rain, true), (snow, true)]) {
                 w.precipitation = if i == 0 { Precipitation::Rain } else { Precipitation::Snow };
             }
         });
+        // what is shown below follows what falls: the flakes' size in snow;
+        // puddles, wet ground and thunder in rain
+        let snowing = w.snowing();
         // how much
         ui.horizontal(|ui| {
             row_label(
@@ -761,45 +762,59 @@ fn weather_section(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
                 );
             });
         });
+        // the flakes' size
+        if snowing {
+            ui.horizontal(|ui| {
+                row_label(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-weather-flake-size"),
+                    aurora_i18n::tr!("ui-weather-flake-size-tip"),
+                );
+                ui.add(egui::Slider::new(&mut w.snow_size, 0.0..=1.0).show_value(false));
+            });
+        }
         // the puddles and how far the wet ground goes
-        ui.horizontal(|ui| {
-            row_label(
-                ui,
-                p,
-                aurora_i18n::tr!("ui-weather-puddles"),
-                aurora_i18n::tr!("ui-weather-puddles-tip"),
-            );
-            widgets::checkbox(ui, p, &mut w.puddles, "");
-        });
-        ui.horizontal(|ui| {
-            row_label(
-                ui,
-                p,
-                aurora_i18n::tr!("ui-weather-distance"),
-                aurora_i18n::tr!("ui-weather-distance-tip"),
-            );
-            ui.add(egui::Slider::new(&mut w.puddle_distance, PUDDLE_DISTANCE).step_by(1.0).suffix(" m"));
-        });
-        // thunder and lightning, in heavy rain
-        ui.horizontal(|ui| {
-            row_label(
-                ui,
-                p,
-                aurora_i18n::tr!("ui-weather-thunder"),
-                aurora_i18n::tr!("ui-weather-thunder-tip"),
-            );
-            widgets::checkbox(ui, p, &mut w.thunder, "");
-        });
-        // how often it strikes
-        ui.horizontal(|ui| {
-            row_label(
-                ui,
-                p,
-                aurora_i18n::tr!("ui-weather-strikes"),
-                aurora_i18n::tr!("ui-weather-strikes-tip"),
-            );
-            ui.add_enabled(w.thunder, egui::Slider::new(&mut w.thunder_frequency, 0.0..=1.0).show_value(false));
-        });
+        if !snowing {
+            ui.horizontal(|ui| {
+                row_label(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-weather-puddles"),
+                    aurora_i18n::tr!("ui-weather-puddles-tip"),
+                );
+                widgets::checkbox(ui, p, &mut w.puddles, "");
+            });
+            ui.horizontal(|ui| {
+                row_label(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-weather-distance"),
+                    aurora_i18n::tr!("ui-weather-distance-tip"),
+                );
+                ui.add(egui::Slider::new(&mut w.puddle_distance, PUDDLE_DISTANCE).step_by(1.0).suffix(" m"));
+            });
+            // thunder and lightning, in heavy rain
+            ui.horizontal(|ui| {
+                row_label(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-weather-thunder"),
+                    aurora_i18n::tr!("ui-weather-thunder-tip"),
+                );
+                widgets::checkbox(ui, p, &mut w.thunder, "");
+            });
+            // how often it strikes
+            ui.horizontal(|ui| {
+                row_label(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-weather-strikes"),
+                    aurora_i18n::tr!("ui-weather-strikes-tip"),
+                );
+                ui.add_enabled(w.thunder, egui::Slider::new(&mut w.thunder_frequency, 0.0..=1.0).show_value(false));
+            });
+        }
         // quality: how much of the weather is drawn (the graphics levels
         // set it too)
         ui.horizontal(|ui| {
@@ -830,6 +845,7 @@ fn weather_section(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
             .on_hover_text(aurora_i18n::tr!("ui-weather-region-tip"));
     });
     if *w != before {
+        w.take_over(&before);
         w.touched = true;
     }
 }

@@ -73,6 +73,8 @@ pub struct WeatherSettings {
     pub snow_footprints: bool,
     /// Puddles freeze while it snows (or snow lies): ice sheets.
     pub ice: bool,
+    /// Deep snow (experimental): parallax through the lying snow.
+    pub snow_deep: bool,
     pub quality: WeatherQuality,
     /// The menu was used this session: `AURORA_RAIN` no longer applies.
     #[serde(skip)]
@@ -98,6 +100,7 @@ impl Default for WeatherSettings {
             snow_distance: SNOW_DISTANCE_DEFAULT,
             snow_footprints: true,
             ice: true,
+            snow_deep: false,
             quality: WeatherQuality::High,
             touched: false,
         }
@@ -210,6 +213,7 @@ impl WeatherSettings {
             snow_lying: 0.0,
             footprints: self.snow_footprints && self.snow_settles,
             ice: self.ice && self.puddles,
+            deep_snow: self.snow_deep && self.snow_settles,
             // the app lights the sky where the lightning struck (thunder_light)
             lightning: [0.0; 4],
             // the app gives the feet set down (scene/snow_trail.rs)
@@ -297,6 +301,7 @@ impl Wind {
     }
 
     /// The wind's speed now (m/s).
+    #[cfg(test)]
     pub fn speed(&self) -> f32 {
         self.now.length()
     }

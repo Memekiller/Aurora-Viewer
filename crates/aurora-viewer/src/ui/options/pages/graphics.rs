@@ -151,6 +151,12 @@ fn weather(cx: &mut Cx) {
                 tr!("ui-weather-footprints-tip"),
                 &field!(weather.snow_footprints),
             );
+            // parallax through the snow: costly, still being tuned
+            cx.experimental().toggle(
+                tr!("ui-weather-deep-snow"),
+                tr!("ui-weather-deep-snow-tip"),
+                &field!(weather.snow_deep),
+            );
         });
         cx.toggle(
             tr!("ui-weather-region"),

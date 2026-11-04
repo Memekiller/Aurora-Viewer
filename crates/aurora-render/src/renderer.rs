@@ -2119,7 +2119,7 @@ impl RainWet {
 
     /// One frame of a rain of `rain` and a snow of `snow` with the camera at
     /// `at`; `ice`: puddles freeze in the snow.
-    fn advance(&mut self, rain: f32, snow: f32, at: Vec2, ice: bool) {
+    fn advance(&mut self, rain: f32, snow: f32, at: Vec2, ice: bool, deep: bool) {
         let now = Instant::now();
         let dt = self.last.map_or(0.0, |t| now.duration_since(t).as_secs_f32().min(1.0));
         let rain = rain.clamp(0.0, 1.0);
@@ -2167,8 +2167,9 @@ impl RainWet {
         let prev = was.unwrap_or(origin);
         self.uniform = [origin.x, origin.y, RAIN_WET_EXTENT, self.level];
         self.step = [prev.x, prev.y, if fresh { -1.0 } else { dt }, self.soak];
-        // z: 1 while rain melts the snow, + 2 while puddles may freeze
-        let flags = if rain > 0.0 { 1.0 } else { 0.0 } + if ice { 2.0 } else { 0.0 };
+        // z: 1 while rain melts the snow, + 2 while puddles may freeze, + 4
+        // deep snow (parallax)
+        let flags = if rain > 0.0 { 1.0 } else { 0.0 } + if ice { 2.0 } else { 0.0 } + if deep { 4.0 } else { 0.0 };
         self.snow_cover = [snow, self.snow, flags, 0.0];
         self.last = Some(now);
     }
@@ -2200,14 +2201,17 @@ fn rain_share(quality: u32) -> f32 {
     }
 }
 
-/// Rain prototype tuning: `AURORA_RAIN_SPEED=<scale>`, the drops' speed
-/// relative to the real terminal velocity for their size (default 1).
+/// Rain prototype: `AURORA_RAIN_DEBUG=1`, the wet pass showing the wetness
+/// memory.
 fn rain_constants() -> &'static [(&'static str, f64)] {
-    static CONSTANTS: std::sync::OnceLock<[(&'static str, f64); 2]> = std::sync::OnceLock::new();
+    static CONSTANTS: std::sync::OnceLock<[(&'static str, f64); 1]> = std::sync::OnceLock::new();
     CONSTANTS.get_or_init(|| {
-        let speed: f64 = std::env::var("AURORA_RAIN_SPEED").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0);
-        let debug = if std::env::var("AURORA_RAIN_DEBUG").is_ok_and(|v| v == "1") { 1.0 } else { 0.0 };
-        [("rain_speed", speed.clamp(0.1, 4.0)), ("rain_debug", debug)]
+        let debug = if std::env::var("AURORA_RAIN_DEBUG").is_ok_and(|v| v == "1") {
+            1.0
+        } else {
+            0.0
+        };
+        [("rain_debug", debug)]
     })
 }
 
@@ -5649,7 +5653,11 @@ impl Backend {
             f32::from(u8::from(f.rain_look.puddles)),
             f.rain_look.distance,
             f.rain_look.quality.min(2) as f32,
-            if f.rain_look.snow > 0.0 { f.rain_look.snow.clamp(0.5, 2.0) } else { 0.0 },
+            if f.rain_look.snow > 0.0 {
+                f.rain_look.snow.clamp(0.5, 2.0)
+            } else {
+                0.0
+            },
         ];
         u.rain_wind = [f.rain_look.drift[0], f.rain_look.drift[1], f.rain_look.wind[0], f.rain_look.wind[1]];
         u.selection_color = f.selection_color;
@@ -5767,7 +5775,11 @@ impl Backend {
             }
         }
         u.spot_lights = [-1; 4];
-        for (k, (spot, vp)) in spot_shadow_views(f, self.rain_shelter(f)).into_iter().enumerate().filter_map(|(k, v)| Some((k, v?))) {
+        for (k, (spot, vp)) in spot_shadow_views(f, self.rain_shelter(f))
+            .into_iter()
+            .enumerate()
+            .filter_map(|(k, v)| Some((k, v?)))
+        {
             u.spot_vp[k] = vp.to_cols_array_2d();
             u.spot_lights[k] = spot.light as i32;
             u.spot_fade[k] = 1.0 - spot.fade.clamp(0.0, 1.0);
@@ -6342,7 +6354,8 @@ impl Backend {
         // snow wets nothing (the ground dries as after rain), it lies
         let (rain, snow) = if f.rain_look.snow > 0.0 { (0.0, f.rain) } else { (f.rain, 0.0) };
         self.rain_wet.snow = self.rain_wet.snow.max(f.rain_look.snow_lying.clamp(0.0, 1.0));
-        self.rain_wet.advance(rain, snow, f.camera_pos.truncate(), f.rain_look.ice);
+        self.rain_wet
+            .advance(rain, snow, f.camera_pos.truncate(), f.rain_look.ice, f.rain_look.deep_snow);
         // footprints while snow lies and they are wanted
         let trail_on = f.rain_look.footprints && (snow > 0.0 || self.rain_wet.snow > RAIN_WET_DRY) && !f.cutout;
         let stamps = f.rain_look.snow_stamp_count.min(crate::types::SNOW_STAMPS as u32);

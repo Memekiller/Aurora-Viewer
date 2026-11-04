@@ -3720,26 +3720,22 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_RAIN=<0..1>` | Rain of this strength until the Weather section is used |
 | `AURORA_SNOW=<0..1>` | Snow of this strength until the Weather section is used |
 | `AURORA_SNOW_LYING=<0..1>` | Snow already lying this deep while it snows |
-| `AURORA_RAIN_SPEED=<scale>` | Raindrops' speed relative to their real fall speed (prototype tuning) |
 | `AURORA_RAIN_DEBUG=1` | Rain's wetness memory drawn in colours over the ground |
-| `AURORA_RAIN_PARTICLES=<0..1>` | The first rain prototype, on particles (to be removed) |
 | `AURORA_THUNDER_AT=<s>` | A lightning strike 1 km away this many seconds after the start |
 | `AURORA_THUNDER_HOLD=<flash>` | The lightning's light on the world held at this brightness |
 
 ### Details
 
-- **Weather (`AURORA_RAIN`, `AURORA_THUNDER_*`)**: the weather of the
-  Environment window's Weather section is drawn for this viewer only.
-  `AURORA_RAIN=<0..1>` sets the rain (0 none, 1 a downpour) for captures
-  and stays until the section is touched in that session, and
-  `AURORA_SNOW=<0..1>` snow the same way (it wins over `AURORA_RAIN`), and
-  `AURORA_SNOW_LYING=<0..1>` starts it with that much snow on the ground
-  (it builds over minutes otherwise: a dusting, then a white cover on what
-  faces up, none on walls or steep roofs); the
-  wind, the
-  puddles, the thunder and the quality come from the settings.
-  `AURORA_RAIN_SPEED=<scale>` (0.1 to 4, default 1) scales the drops' fall
-  speed from their real terminal speed. `AURORA_RAIN_DEBUG=1` colours the
+- **Weather (`AURORA_RAIN`, `AURORA_SNOW*`, `AURORA_THUNDER_*`)**: the
+  weather of the Environment window's Aurora Weather section is drawn for
+  this viewer only. `AURORA_RAIN=<0..1>` sets the rain (0 none, 1 a
+  downpour) for captures and stays until the section is touched in that
+  session; `AURORA_SNOW=<0..1>` sets snow the same way (it wins over
+  `AURORA_RAIN`), and `AURORA_SNOW_LYING=<0..1>` starts it with that much
+  snow on the ground (it builds over minutes otherwise: a dusting, then a
+  white cover on what faces up, none on walls or steep roofs). The wind,
+  the puddles, the thunder and the quality come from the settings.
+  `AURORA_RAIN_DEBUG=1` colours the
   ground by its wetness memory: yellow, outside the memory; red, only
   assumed open (seen beyond the shelter map); green, wet; blue, dry under
   cover; brighter, the wetter. `AURORA_THUNDER_AT=<s>` makes one strike

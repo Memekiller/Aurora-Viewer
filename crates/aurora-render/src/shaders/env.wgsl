@@ -1652,14 +1652,8 @@ const RAIN_EXPOSURE: f32 = 0.05;
 // Drops are never drawn thinner than this many pixels (they fade instead).
 const RAIN_MIN_PX: f32 = 1.3;
 
-// Prototype tuning: the drops' speed relative to the real one
-// (renderer.rs, AURORA_RAIN_SPEED).
-override rain_speed: f32 = 1.0;
 // AURORA_RAIN_DEBUG=1: the wet pass shows the wetness memory instead
 override rain_debug: f32 = 0.0;
-fn rain_speed_scale() -> f32 {
-    return max(rain_speed, 0.1);
-}
 
 // What falls is snow (`RainLook::snow`): the drops pass draws flakes, and
 // nothing wets.
@@ -1714,7 +1708,7 @@ fn vs_rain(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance
     let heavy = frame.rain.x;
     let snow = snowing();
     var diameter = min(0.9 + heavy * 0.6 - log(1.0 - rain_rand(seed + 3u) * 0.999) * (0.5 + heavy), 6.0);
-    var speed = (9.65 - 10.3 * exp(-0.6 * diameter)) * rain_speed_scale();
+    var speed = (9.65 - 10.3 * exp(-0.6 * diameter));
     // the wind carries the drops (small ones a little more): the slant from
     // the wind now, the place from all it blew so far (a gust bends the
     // rain, no drop jumps)
@@ -1725,7 +1719,7 @@ fn vs_rain(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance
         // and Hobbs 1974); light, they go with the air
         let k = rain_rand(seed + 3u);
         diameter = (2.0 + (8.0 + heavy * 2.0) * k * k) * frame.rain_look.w;
-        speed = (0.5 + 0.08 * min(diameter, 12.0) + rain_rand(seed + 5u) * 0.3) * rain_speed_scale();
+        speed = (0.5 + 0.08 * min(diameter, 12.0) + rain_rand(seed + 5u) * 0.3);
         carried = 1.0;
     }
     let time = frame.camera_pos.w;
@@ -2573,6 +2567,58 @@ fn snow_noise(p: vec2<f32>) -> f32 {
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
+// Deep snow (experimental, frame.snow_cover.z bit 4).
+fn snow_deep() -> bool {
+    return (u32(frame.snow_cover.z + 0.5) & 4u) != 0u;
+}
+
+// How high the snow's surface stands at `xy` over what it lies on (m): up
+// to 8 cm under a full cover, its lumps (Snow 004's height), pressed down
+// in the footprints.
+fn snow_surface(xy: vec2<f32>, lying: f32, slot: u32, lod: f32) -> f32 {
+    var lumps = 0.5;
+    if (slot > 0u) { lumps = sample_tex_level(slot, xy / 1.6, lod).w; }
+    var pressed = 0.0;
+    let extent = frame.snow_trail.z;
+    if (extent > 0.0) {
+        let uv = (xy - frame.snow_trail.xy) / extent;
+        if (all(uv >= vec2<f32>(0.0)) && all(uv <= vec2<f32>(1.0))) {
+            pressed = textureSampleLevel(snow_trail, lin_clamp, uv, 0.0).r;
+        }
+    }
+    return lying * 0.08 * (0.7 + 0.3 * lumps) * (1.0 - 0.9 * pressed);
+}
+
+// Parallax through the snow: the view `v` (toward the camera) walked down
+// from the top of the snow's layer above `world` until it meets the snow's
+// surface (12 steps, then halved twice): where the eye really sees it.
+fn snow_parallax(world: vec3<f32>, v: vec3<f32>, lying: f32, slot: u32, lod: f32) -> vec2<f32> {
+    let top = lying * 0.08;
+    if (top < 0.004 || v.z < 0.12) { return world.xy; }
+    // from where the view enters the layer to where it reaches the ground
+    let enter = world + v * (top / v.z);
+    var lo = 0.0;
+    var hi = 1.0;
+    var found = false;
+    for (var i = 1; i <= 12; i++) {
+        let s = f32(i) / 12.0;
+        let p = mix(enter, world, s);
+        if (p.z - world.z <= snow_surface(p.xy, lying, slot, lod)) {
+            hi = s;
+            lo = f32(i - 1) / 12.0;
+            found = true;
+            break;
+        }
+    }
+    if (!found) { return world.xy; }
+    for (var k = 0; k < 2; k++) {
+        let mid = (lo + hi) * 0.5;
+        let p = mix(enter, world, mid);
+        if (p.z - world.z <= snow_surface(p.xy, lying, slot, lod)) { hi = mid; } else { lo = mid; }
+    }
+    return mix(enter, world, hi).xy;
+}
+
 // Snow cover, premultiplied: it lies on what faces up, thinning on slopes
 // and gone past about 55° (it slides off: walls and steep roofs stay bare),
 // first as a patchy dusting (the noise: grass tips, the high spots), then
@@ -2595,11 +2641,18 @@ fn snow_cover(clip: vec2<f32>, world: vec3<f32>, n: vec3<f32>) -> vec4<f32> {
     let slot = u32(frame.snow_cover.w + 0.5);
     var sn = n;
     var height = 0.5;
+    let along = max(abs(dot(normalize(cam - world), n)), 0.08);
+    let footprint = dist * 1.15 * frame.screen.w / along;
+    let lod = max(log2(footprint / (1.6 / 512.0)), 0.0);
+    // Deep snow (experimental): where the view meets the snow's own surface,
+    // a few centimetres above what it lies on, its lumps and footprints
+    // standing up from it (parallax), not the surface below
+    var xy = world.xy;
+    if (snow_deep() && dist < 18.0 && slope > 0.5) {
+        xy = snow_parallax(world, normalize(cam - world), lying, slot, lod);
+    }
     if (slot > 0u) {
-        let along = max(abs(dot(normalize(cam - world), n)), 0.08);
-        let footprint = dist * 1.15 * frame.screen.w / along;
-        let lod = max(log2(footprint / (1.6 / 512.0)), 0.0);
-        let t = sample_tex_level(slot, world.xy / 1.6, lod);
+        let t = sample_tex_level(slot, xy / 1.6, lod);
         let tn = t.xyz * 2.0 - vec3<f32>(1.0);
         height = t.w;
         // its bumps over the surface's own facing (the snow lies level-ish)
@@ -2608,14 +2661,14 @@ fn snow_cover(clip: vec2<f32>, world: vec3<f32>, n: vec3<f32>) -> vec4<f32> {
     // footprints: the snow pressed down, its walls tilting the facing (a
     // dent about as deep as the snow lies, a few centimetres), the thin
     // snow pressed through to what is under it
-    let print = snow_pressed(world.xy);
+    let print = snow_pressed(xy);
     let pressed = print.x * slope;
     if (pressed > 0.001) {
         sn = normalize(sn + vec3<f32>(print.yz * 6.0 * lying, 0.0));
         height = mix(height, 0.0, pressed * 0.6);
     }
     // a dusting fills the hollows first, then covers the bumps
-    let patches = snow_noise(world.xy * 2.3) * 0.65 + snow_noise(world.xy * 9.1) * 0.35;
+    let patches = snow_noise(xy * 2.3) * 0.65 + snow_noise(xy * 9.1) * 0.35;
     let gathered = (lying * 1.3 + (0.5 - height) * 0.45 * (1.0 - lying)) * (1.0 - pressed * (1.0 - lying) * 0.85);
     var cover = smoothstep(patches * 0.9, patches * 0.9 + 0.25, gathered);
     cover *= 1.0 - smoothstep(far * 0.8, far, dist);
@@ -2627,7 +2680,7 @@ fn snow_cover(clip: vec2<f32>, world: vec3<f32>, n: vec3<f32>) -> vec4<f32> {
     let sun = frame.sun_color.rgb * lit_sun * shade;
     let lamps = rain_lamps(world, clip, view);
     // glints: a few tiny facets of ice turned toward the sun
-    let cell = floor(world.xy * 60.0);
+    let cell = floor(xy * 60.0);
     let g = rain_rand(rain_hash(bitcast<u32>(i32(cell.x)) * 2654435761u ^ bitcast<u32>(i32(cell.y))));
     let half = normalize(frame.sun_dir.xyz + view);
     let glint = step(0.985, g) * pow(max(dot(sn, half), 0.0), 40.0) * frame.sun_color.rgb * shade * 2.0;

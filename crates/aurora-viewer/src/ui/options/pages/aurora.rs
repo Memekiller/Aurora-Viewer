@@ -385,6 +385,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         "weather.snow_settles",
                         "weather.snow_distance",
                         "weather.snow_footprints",
+                        "weather.snow_deep",
                         "weather.region_weather",
                         "weather.wind_follow_region",
                         "weather.wind_from",

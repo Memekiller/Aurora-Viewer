@@ -159,7 +159,11 @@ impl RainSound {
         self.surface += (sky.surface - self.surface) * k;
         // high above what the rain lands on (flying): only a faint, soft
         // hiss from far below; the loops' mix leans to the light one
-        let aloft = if input.underwater > 0.0 { 0.0 } else { smoothstep(6.0, 38.0, self.surface) };
+        let aloft = if input.underwater > 0.0 {
+            0.0
+        } else {
+            smoothstep(6.0, 38.0, self.surface)
+        };
         // under the water: the rain on the surface, muffled, fading with
         // the depth; no roof
         let under = input.underwater > 0.0;
@@ -202,7 +206,11 @@ impl RainSound {
         // is in sight and they stay clear; each speaker's own side is
         // already as loud as rain is heard there); under the water, as
         // through two walls
-        let occlusion = if under { 1.0 } else { (1.0 - smoothstep(0.03, 0.3, self.exposure)).max(0.5 * aloft) };
+        let occlusion = if under {
+            1.0
+        } else {
+            (1.0 - smoothstep(0.03, 0.3, self.exposure)).max(0.5 * aloft)
+        };
         if (occlusion - self.sent_occlusion).abs() > 0.02 {
             for i in 0..8 {
                 engine.world_occlusion(VOICE_BASE + i, occlusion);

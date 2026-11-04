@@ -3863,11 +3863,14 @@ impl Backend {
             constants: rain_constants(),
             ..base("rain wet ground", "vs_rain_wet", "fs_rain_wet")
         });
-        // the same reading the screen-space reflections' G-buffer (group 3)
+        // the same reading the screen-space reflections' G-buffer (group 3),
+        // and the bindless textures (group 2: the lying snow's detail; the
+        // pipeline is invalid without them, and every frame that sets it
+        // fails)
         let rain_wet_g = ssr.then(|| {
             let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("rain wet ground (G-buffer)"),
-                bind_group_layouts: &[Some(frame_layout), None, None, Some(gbuf_layout)],
+                bind_group_layouts: &[Some(frame_layout), None, Some(tex_layout), Some(gbuf_layout)],
                 immediate_size: 0,
             });
             make_pipeline(

@@ -153,9 +153,9 @@ impl App {
                         match env_editor::frames(doc) {
                             (Some(sky), _) => {
                                 self.world.eep.apply_local_sky(sky);
-                                self.local_weather = weather
-                                    .zip(self.world.eep.local_generation())
-                                    .map(|(w, g)| (g, crate::weather::region::RegionDay::fixed(w)));
+                                self.world
+                                    .eep
+                                    .set_local_weather(weather.map(crate::weather::region::RegionDay::fixed));
                             }
                             (_, Some(water)) => self.world.eep.apply_local_water(water),
                             _ => {}

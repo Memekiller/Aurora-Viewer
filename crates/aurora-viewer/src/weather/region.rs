@@ -402,6 +402,16 @@ impl RegionDay {
     }
 }
 
+/// The Aurora Weather of a settings asset's map: a sky's (all day), or a
+/// day's ground track (with the default day length: applied to myself).
+pub fn of_settings(map: &aurora_llsd::Llsd) -> Option<RegionDay> {
+    match map["type"].as_str() {
+        "daycycle" => RegionDay::read(map, 0, crate::world::eep::DEFAULT_DAY_LENGTH, crate::world::eep::DEFAULT_DAY_OFFSET),
+        "sky" => SkyWeather::from_name(map["name"].as_str()).map(RegionDay::fixed),
+        _ => None,
+    }
+}
+
 /// The letters after the last `~` of a name, trimmed.
 fn code_part(name: &str) -> Option<&str> {
     let trimmed = name.trim_end();
@@ -665,6 +675,17 @@ mod tests {
         }
         let clear = RegionDay::fixed(SkyWeather::CLEAR);
         assert!((0..100).all(|i| clear.fall_at(seed, t0 + f64::from(i) * 100.0) == 0.0));
+    }
+
+    #[test]
+    fn a_settings_asset_gives_its_weather_from_its_name() {
+        let sky = llsd_map! {"type" => "sky", "name" => storm().name_with("Storm")};
+        assert_eq!(of_settings(&sky), Some(RegionDay::fixed(storm())));
+        assert_eq!(of_settings(&llsd_map! {"type" => "sky", "name" => "Plain"}), None);
+        let mut d = day("Day", &[(0.0, "s", &storm().name_with("S"))]);
+        d.insert("type", "daycycle");
+        assert!(of_settings(&d).is_some_and(|r| r.state_at(0.3) == storm()));
+        assert_eq!(of_settings(&llsd_map! {"type" => "water", "name" => storm().name_with("W")}), None);
     }
 
     #[test]

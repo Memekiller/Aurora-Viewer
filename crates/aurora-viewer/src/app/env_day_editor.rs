@@ -193,7 +193,7 @@ impl App {
                             .doc
                             .as_ref()
                             .and_then(|d| crate::weather::region::RegionDay::read(&d.to_llsd(), 0, length, offset));
-                        self.local_weather = weather.zip(self.world.eep.local_generation()).map(|(w, g)| (g, w));
+                        self.world.eep.set_local_weather(weather);
                         self.day_editor.message = Some((aurora_i18n::tr!("ui-env-editor-applied").into(), false));
                     }
                 }

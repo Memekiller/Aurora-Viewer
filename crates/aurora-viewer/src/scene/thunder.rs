@@ -493,8 +493,9 @@ mod tests {
         let t0 = Instant::now();
         let mut th = Thunder::default();
         th.strike(t0, Some(1715.0));
-        // the stroke follows the leader (at most 120 ms)
-        th.update(None, &input(0.0), t0 + Duration::from_millis(125));
+        // the stroke follows the leader (50 to 120 ms)
+        let leader = th.flashes[0].leader;
+        th.update(None, &input(0.0), t0 + Duration::from_secs_f32(leader + 0.005));
         assert!(th.flash > 0.5, "{}", th.flash);
         assert_eq!(th.claps.len(), 1);
         // 5 s for 1.7 km: still on its way at 4.9 s, gone at 5.1 s

@@ -1274,6 +1274,9 @@ pub struct RainLook {
     /// What falls is snow, with the flakes' size scale (0.5 to 2; 0: rain):
     /// flakes instead of drops, nothing wets.
     pub snow: f32,
+    /// The lying snow's detail texture (normal and height): its bindless
+    /// slot, 0 for none.
+    pub snow_detail: u32,
 }
 
 impl Default for RainLook {
@@ -1285,6 +1288,7 @@ impl Default for RainLook {
             drift: [0.0; 2],
             quality: 2,
             snow: 0.0,
+            snow_detail: 0,
         }
     }
 }

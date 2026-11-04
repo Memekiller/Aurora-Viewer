@@ -198,6 +198,8 @@ impl WeatherSettings {
             wind: wind.now.to_array(),
             drift: wind.drift.to_array(),
             snow: if self.snowing() { self.flake_scale() } else { 0.0 },
+            // the app gives the detail texture's slot (scene/snow_detail.rs)
+            snow_detail: 0,
             quality: match self.quality {
                 WeatherQuality::Low => 0,
                 WeatherQuality::Medium => 1,

@@ -117,7 +117,7 @@ struct Frame {
     rain_wet_step: vec4<f32>,   // last corner xy, z time since (s, < 0: none), w soak of a new place
     rain_look: vec4<f32>,       // x puddles (0/1), y how far the wet ground is drawn (m), z quality (0 low, 1 medium, 2 high), w snow (0/1)
     rain_wind: vec4<f32>,       // xy how far the wind carried the drops (m), zw the wind now (m/s)
-    snow_cover: vec4<f32>,      // x how hard it snows, y the snow's depth on a new place, z 1 while rain melts it
+    snow_cover: vec4<f32>,      // x how hard it snows, y the snow's depth on a new place, z 1 while rain melts it, w the detail texture's slot (0: none)
     photo: vec4<f32>,           // the main view of a photo tile: its part of the photo (left, top, width, height); zero otherwise
 };
 

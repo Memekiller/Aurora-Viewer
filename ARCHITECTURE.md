@@ -2946,7 +2946,9 @@ a sky's code and previews it; the day editor writes the schedule and marks
 the key frames that carry weather. `App::update_weather_now` lays it over the settings each frame. The rain and
 snow are drawn by `aurora-render` (`shaders/env.wgsl`, the rain sections:
 drops or flakes, the shelter map, distant layers, wet ground and puddles),
-the thunder and lightning by `scene/thunder.rs` (its bolts as particles),
+the snow lying on the ground by the same wet pass from the memory's third channel, with its detail
+texture uploaded by `scene/snow_detail.rs` (assets/snow, CC0), the thunder and lightning by
+`scene/thunder.rs` (its bolts as particles),
 the rain's sound by `scene/rain_sound.rs`.
 
 ## Life of a frame

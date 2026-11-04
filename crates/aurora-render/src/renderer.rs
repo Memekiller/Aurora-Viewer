@@ -176,7 +176,8 @@ struct FrameU {
     /// the wind now (m/s).
     rain_wind: [f32; 4],
     /// Snow cover: x how hard it snows (0..1), y how deep the snow lies on
-    /// a place new to the memory (0..1), z 1 while rain melts it.
+    /// a place new to the memory (0..1), z 1 while rain melts it, w the
+    /// detail texture's slot (0: none).
     snow_cover: [f32; 4],
     /// The main view of a photo tile: its part of the photo
     /// ([`photo_part`]); zero otherwise. The screen-space reflections fade
@@ -5553,6 +5554,7 @@ impl Backend {
         u.rain_wet = self.rain_wet.uniform;
         u.rain_wet_step = self.rain_wet.step;
         u.snow_cover = self.rain_wet.snow_cover;
+        u.snow_cover[3] = f.rain_look.snow_detail as f32;
         u.rain_look = [
             f32::from(u8::from(f.rain_look.puddles)),
             f.rain_look.distance,

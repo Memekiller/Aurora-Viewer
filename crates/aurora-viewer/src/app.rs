@@ -10215,7 +10215,10 @@ impl App {
             cutout: self.world.photo_isolation.empty_background(),
             // rain or snow: the drops pass draws either
             rain: self.weather_now.fall(),
-            rain_look: self.weather_now.rain_look(&self.weather_wind),
+            rain_look: aurora_render::RainLook {
+                snow_detail: self.scene.snow_detail.slot(&mut gfx.renderer).unwrap_or(0),
+                ..self.weather_now.rain_look(&self.weather_wind)
+            },
             look: None,
         };
         // the lightning, lighting the world

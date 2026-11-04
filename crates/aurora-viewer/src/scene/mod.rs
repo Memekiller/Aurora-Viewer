@@ -52,6 +52,7 @@ pub mod portals;
 pub mod probes;
 mod rain_ground;
 pub mod rain_sound;
+pub mod snow_detail;
 pub mod thunder;
 pub mod rez;
 mod sculpt_watch;
@@ -754,6 +755,8 @@ pub struct AvatarSample {
 }
 
 pub struct Scene {
+    /// Aurora Weather: the lying snow's detail texture.
+    pub snow_detail: snow_detail::SnowDetail,
     auto_hover: auto_hover::AutoHover,
     remote_soles: auto_hover::RemoteSoles,
     foot_scope: foot_scope::Scope,
@@ -1421,6 +1424,7 @@ impl Scene {
         default_motions::register(&mut anims, &avatar_lib.rig);
         let physics_rig = body_physics::PhysicsRig::new(&avatar_lib.shape_params, &avatar_lib.rig).map(Arc::new);
         Scene {
+            snow_detail: Default::default(),
             jobs,
             job_rx,
             sculpt_watch: sculpt_watch::SculptWatch::from_env(),

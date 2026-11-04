@@ -2533,13 +2533,30 @@ fn snow_cover(clip: vec2<f32>, world: vec3<f32>, n: vec3<f32>) -> vec4<f32> {
     let slope = smoothstep(0.55, 0.85, n.z);
     let lying = depth * slope;
     if (lying <= 0.002) { return vec4<f32>(0.0); }
+    // the snow's own surface (Snow 004: its normal and height, a tile of
+    // 1.6 m), read at the mip the pixel covers: soft lumps and grain
+    let slot = u32(frame.snow_cover.w + 0.5);
+    var sn = n;
+    var height = 0.5;
+    if (slot > 0u) {
+        let along = max(abs(dot(normalize(cam - world), n)), 0.08);
+        let footprint = dist * 1.15 * frame.screen.w / along;
+        let lod = max(log2(footprint / (1.6 / 512.0)), 0.0);
+        let t = sample_tex_level(slot, world.xy / 1.6, lod);
+        let tn = t.xyz * 2.0 - vec3<f32>(1.0);
+        height = t.w;
+        // its bumps over the surface's own facing (the snow lies level-ish)
+        sn = normalize(n + vec3<f32>(tn.xy * 0.7, 0.0));
+    }
+    // a dusting fills the hollows first, then covers the bumps
     let patches = snow_noise(world.xy * 2.3) * 0.65 + snow_noise(world.xy * 9.1) * 0.35;
-    var cover = smoothstep(patches * 0.9, patches * 0.9 + 0.25, lying * 1.3);
+    let gathered = lying * 1.3 + (0.5 - height) * 0.45 * (1.0 - lying);
+    var cover = smoothstep(patches * 0.9, patches * 0.9 + 0.25, gathered);
     cover *= 1.0 - smoothstep(far * 0.8, far, dist);
     if (cover <= 0.002) { return vec4<f32>(0.0); }
     let view = normalize(cam - world);
     let ambient = frame.sky_zenith.rgb * 0.6 + frame.sky_horizon.rgb * 0.4;
-    let lit_sun = max(dot(n, frame.sun_dir.xyz), 0.0) * frame.sun_dir.w;
+    let lit_sun = max(dot(sn, frame.sun_dir.xyz), 0.0) * frame.sun_dir.w;
     let shade = shadow_factor(world, n, dist);
     let sun = frame.sun_color.rgb * lit_sun * shade;
     let lamps = rain_lamps(world, clip, view);
@@ -2547,8 +2564,10 @@ fn snow_cover(clip: vec2<f32>, world: vec3<f32>, n: vec3<f32>) -> vec4<f32> {
     let cell = floor(world.xy * 60.0);
     let g = rain_rand(rain_hash(bitcast<u32>(i32(cell.x)) * 2654435761u ^ bitcast<u32>(i32(cell.y))));
     let half = normalize(frame.sun_dir.xyz + view);
-    let glint = step(0.985, g) * pow(max(dot(n, half), 0.0), 40.0) * frame.sun_color.rgb * shade * 2.0;
-    let color = (ambient * 0.95 + sun * 0.9 + lamps * 0.6) * 0.92 + glint;
+    let glint = step(0.985, g) * pow(max(dot(sn, half), 0.0), 40.0) * frame.sun_color.rgb * shade * 2.0;
+    // the hollows a little shaded
+    let cavity = 0.86 + 0.14 * height;
+    let color = (ambient * 0.95 * cavity + sun * 0.9 + lamps * 0.6) * 0.92 + glint;
     return vec4<f32>(apply_fog(color, world) * cover, cover);
 }
 

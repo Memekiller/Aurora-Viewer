@@ -771,7 +771,7 @@ fn row_label(ui: &mut egui::Ui, p: &Palette, text: &str, tip: &str) {
 
 /// Where the Weather section keeps its label column's width this frame.
 fn label_width_id() -> egui::Id {
-    egui::Id::new("environment_weather_label_width")
+    egui::Id::unique("environment_weather_label_width")
 }
 
 /// The Weather section's label column: as wide as its longest label in the

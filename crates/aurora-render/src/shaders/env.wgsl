@@ -1652,6 +1652,17 @@ fn snowing() -> bool {
     return frame.rain_look.w > 0.25;
 }
 
+// While rain melts the lying snow (frame.snow_cover.z bit 1).
+fn snow_melting() -> bool {
+    return (u32(frame.snow_cover.z + 0.5) & 1u) != 0u;
+}
+
+// The puddles are ice: they may freeze (the Ice setting, bit 2) and it
+// snows or snow lies.
+fn puddles_frozen() -> bool {
+    return (u32(frame.snow_cover.z + 0.5) & 2u) != 0u && !snow_melting() && (snowing() || frame.snow_cover.y > 0.05);
+}
+
 // How hard it rains, for what water does (the wet ground, puddles, rings,
 // splashes): none in snow.
 fn rain_liquid() -> f32 {
@@ -2223,7 +2234,8 @@ fn fs_rain_wet_update(in: RainWetOut) -> @location(0) vec4<f32> {
     }
     if (heavy > 0.0) {
         amount += (1.0 - amount) * (1.0 - exp(-dt * (0.5 + heavy) / 8.0));
-    } else {
+    } else if (!puddles_frozen()) {
+        // dries after; frozen, the water stays as ice
         amount *= exp(-dt / 120.0);
     }
     // the snow: it builds where it falls (the place's reached surface is
@@ -2240,7 +2252,7 @@ fn fs_rain_wet_update(in: RainWetOut) -> @location(0) vec4<f32> {
     } else if (snowing() && falling > 0.0) {
         // in the lee, while it snows: it stays as it lies
     } else {
-        snow_depth *= exp(-dt / select(900.0, 120.0, frame.snow_cover.z > 0.5));
+        snow_depth *= exp(-dt / select(900.0, 120.0, snow_melting()));
     }
     return vec4<f32>(wet_h, amount, snow_depth, 1.0);
 }
@@ -2416,7 +2428,10 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
     // edges; water runs off bumps (a rock's top) and gathers in dips
     var puddle = 0.0;
     let terrain = rain_terrain(world.xy);
-    if (frame.rain_look.x < 0.5) {
+    // in snow the switch is the lying snow's: the puddles left are ice,
+    // with the Ice setting
+    let puddles_on = select(frame.rain_look.x > 0.5, puddles_frozen(), snowing());
+    if (!puddles_on) {
         // puddles off (the weather settings)
     } else if (terrain > -1e8 && abs(world.z - terrain) < 0.12) {
         // on the terrain: the blobs of the builds' puddles, moved by the
@@ -2471,7 +2486,22 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
     let glints = rain_wet_lamps(world, clip, nf, view, glint_across, glint_across * 4.0) * film * 0.15;
     var color = deeper + sheen + glints;
 
-    if (puddle > 0.01) {
+    if (puddle > 0.01 && puddles_frozen()) {
+        // ice: a still, glassy sheet, sharp reflections a little whitened
+        // and bluish, frost at its edges and in patches (its surface rough
+        // there), the lamps in it sharp
+        let frost_n = vec2<f32>(snow_noise(world.xy * 31.0) - 0.5, snow_noise(world.xy * 29.0 + 7.0) - 0.5);
+        let frost = clamp((1.0 - puddle) * 1.6 + smoothstep(0.55, 0.85, snow_noise(world.xy * 4.0)) * 0.6, 0.0, 1.0);
+        let ni = normalize(vec3<f32>(frost_n * 0.05 * (0.3 + frost), 1.0));
+        let r = reflect(-view, ni);
+        let fresnel = 0.02037 + 0.97963 * pow(1.0 - max(dot(ni, view), 0.0), 5.0);
+        let mirrored = rain_puddle_reflection(world + vec3<f32>(0.0, 0.0, 0.02), r);
+        let ice_tint = vec3<f32>(0.9, 0.95, 1.0);
+        let glass = mix(base * 0.4, mirrored, 0.3 + fresnel * 0.6) * ice_tint + rain_wet_lamps(world, clip, ni, view, 0.015, 0.03);
+        let rime = (frame.sky_zenith.rgb * 0.6 + frame.sky_horizon.rgb * 0.4) * 0.85;
+        let ice = mix(glass, rime, frost * 0.7);
+        color = mix(color, ice, puddle);
+    } else if (puddle > 0.01) {
         let along = max(abs(dot(view, vec3<f32>(0.0, 0.0, 1.0))), 0.05);
         let footprint = dist * 1.15 * frame.screen.w / along;
         let ripple = rain_water_churn(world.xy, frame.camera_pos.w, raining, rain_ring_detail(footprint)) * puddle * sqrt(raining);

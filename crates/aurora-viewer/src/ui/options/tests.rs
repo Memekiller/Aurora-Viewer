@@ -1669,6 +1669,7 @@ fn the_weather_lives_in_graphics_and_every_row_the_aurora_page_borrows_exists() 
         "weather.quality",
         "weather.puddles",
         "weather.puddle_distance",
+        "weather.ice",
         "weather.snow_settles",
         "weather.snow_distance",
         "weather.snow_footprints",

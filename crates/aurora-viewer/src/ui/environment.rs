@@ -789,6 +789,7 @@ fn weather_label_width(ui: &egui::Ui) -> f32 {
         aurora_i18n::tr!("ui-weather-snow-settles"),
         aurora_i18n::tr!("ui-weather-snow-distance"),
         aurora_i18n::tr!("ui-weather-footprints"),
+        aurora_i18n::tr!("ui-weather-ice"),
         aurora_i18n::tr!("ui-weather-puddles"),
         aurora_i18n::tr!("ui-weather-distance"),
         aurora_i18n::tr!("ui-weather-thunder"),
@@ -948,6 +949,11 @@ fn weather_section(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
                     aurora_i18n::tr!("ui-weather-footprints-tip"),
                 );
                 ui.add_enabled_ui(w.snow_settles, |ui| widgets::checkbox(ui, p, &mut w.snow_footprints, ""));
+            });
+            // the puddles left by rain, frozen
+            ui.horizontal(|ui| {
+                row_label(ui, p, aurora_i18n::tr!("ui-weather-ice"), aurora_i18n::tr!("ui-weather-ice-tip"));
+                widgets::checkbox(ui, p, &mut w.ice, "");
             });
         }
         // the puddles and how far the wet ground goes

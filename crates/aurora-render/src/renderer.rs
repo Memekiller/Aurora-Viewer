@@ -2115,12 +2115,15 @@ impl RainWet {
     }
 
     /// One frame of a rain of `rain` and a snow of `snow` with the camera at
-    /// `at`.
-    fn advance(&mut self, rain: f32, snow: f32, at: Vec2) {
+    /// `at`; `ice`: puddles freeze in the snow.
+    fn advance(&mut self, rain: f32, snow: f32, at: Vec2, ice: bool) {
         let now = Instant::now();
         let dt = self.last.map_or(0.0, |t| now.duration_since(t).as_secs_f32().min(1.0));
         let rain = rain.clamp(0.0, 1.0);
-        if rain > self.level {
+        // frozen: the standing water stays (no drain), as ice
+        let frozen = ice && rain <= 0.0 && (snow > 0.0 || self.snow > 0.05);
+        if frozen {
+        } else if rain > self.level {
             self.level += (rain - self.level) * (1.0 - (-dt * (0.5 + rain) / RAIN_FILL_SECS).exp());
         } else {
             self.level += (rain - self.level) * (1.0 - (-dt / RAIN_DRAIN_SECS).exp());
@@ -2129,7 +2132,7 @@ impl RainWet {
             self.level = self.level.max(1e-3);
             self.soak += (1.0 - self.soak) * (1.0 - (-dt * (0.5 + rain) / RAIN_SOAK_SECS).exp());
             self.soak = self.soak.max(1e-3);
-        } else {
+        } else if !frozen {
             self.soak *= (-dt / RAIN_DRY_SECS).exp();
         }
         let snow = snow.clamp(0.0, 1.0);
@@ -2161,7 +2164,9 @@ impl RainWet {
         let prev = was.unwrap_or(origin);
         self.uniform = [origin.x, origin.y, RAIN_WET_EXTENT, self.level];
         self.step = [prev.x, prev.y, if fresh { -1.0 } else { dt }, self.soak];
-        self.snow_cover = [snow, self.snow, if rain > 0.0 { 1.0 } else { 0.0 }, 0.0];
+        // z: 1 while rain melts the snow, + 2 while puddles may freeze
+        let flags = if rain > 0.0 { 1.0 } else { 0.0 } + if ice { 2.0 } else { 0.0 };
+        self.snow_cover = [snow, self.snow, flags, 0.0];
         self.last = Some(now);
     }
 }
@@ -6333,7 +6338,7 @@ impl Backend {
         // snow wets nothing (the ground dries as after rain), it lies
         let (rain, snow) = if f.rain_look.snow > 0.0 { (0.0, f.rain) } else { (f.rain, 0.0) };
         self.rain_wet.snow = self.rain_wet.snow.max(f.rain_look.snow_lying.clamp(0.0, 1.0));
-        self.rain_wet.advance(rain, snow, f.camera_pos.truncate());
+        self.rain_wet.advance(rain, snow, f.camera_pos.truncate(), f.rain_look.ice);
         // footprints while snow lies and they are wanted
         let trail_on = f.rain_look.footprints && (snow > 0.0 || self.rain_wet.snow > RAIN_WET_DRY) && !f.cutout;
         let stamps = f.rain_look.snow_stamp_count.min(crate::types::SNOW_STAMPS as u32);

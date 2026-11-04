@@ -1282,6 +1282,9 @@ pub struct RainLook {
     pub snow_lying: f32,
     /// Footprints are kept in the lying snow.
     pub footprints: bool,
+    /// Puddles freeze while it snows or snow lies (they neither drain nor
+    /// dry while frozen).
+    pub ice: bool,
     /// Feet set down this frame: x, y (m), the foot's heading (rad), its half
     /// length (m); the first `snow_stamp_count`.
     pub snow_stamps: [[f32; 4]; SNOW_STAMPS],
@@ -1303,6 +1306,7 @@ impl Default for RainLook {
             snow_detail: 0,
             snow_lying: 0.0,
             footprints: false,
+            ice: false,
             snow_stamps: [[0.0; 4]; SNOW_STAMPS],
             snow_stamp_count: 0,
         }

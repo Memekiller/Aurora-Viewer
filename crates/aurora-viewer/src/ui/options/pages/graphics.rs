@@ -129,6 +129,7 @@ fn weather(cx: &mut Cx) {
                 PUDDLE_DISTANCE,
                 " m",
             );
+            cx.toggle(tr!("ui-weather-ice"), tr!("ui-weather-ice-tip"), &field!(weather.ice));
         });
         // the snow lying, and behind its cog how far it is drawn
         cx.toggle(

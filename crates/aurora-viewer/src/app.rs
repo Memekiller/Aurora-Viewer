@@ -581,6 +581,9 @@ pub struct App {
     /// The region weather read from the environment in effect, keyed by its
     /// day cycle's map and sky track (parsed again only when they change).
     region_weather: Option<(usize, usize, Option<crate::weather::region::RegionDay>)>,
+    /// How deep a region's snow lies so far (its history played again), and
+    /// when that was worked out (again every ten seconds).
+    snow_lying: (f32, Option<Instant>),
     /// The weather's thunder and lightning.
     thunder: crate::scene::thunder::Thunder,
     /// AURORA_THUNDER_AT's strike is done.
@@ -1444,6 +1447,7 @@ impl App {
             weather_wind: Default::default(),
             weather_now: Default::default(),
             region_weather: None,
+            snow_lying: (0.0, None),
             thunder: Default::default(),
             thunder_demo_done: false,
             stuck_watch: None,
@@ -5434,7 +5438,12 @@ impl App {
         }
         // a sky or day applied to myself with Aurora Weather: mine, whatever
         // the regions may set
+        // the snow a day's weather has left so far, every ten seconds
+        let due = self.snow_lying.1.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(10));
         if let Some(day) = self.world.eep.local_weather() {
+            if due {
+                self.snow_lying = (day.snow_lying(region, secs), Some(Instant::now()));
+            }
             self.weather_now = day.apply(own, region, secs, false);
             return;
         }
@@ -5461,8 +5470,15 @@ impl App {
                 self.region_weather = Some((key.0, key.1, read));
             }
             if let Some((_, _, Some(day))) = &self.region_weather {
+                if due {
+                    self.snow_lying = (day.snow_lying(region, secs), Some(Instant::now()));
+                }
                 now = Some(day.apply(own, region, secs, false));
             }
+        }
+        if now.is_none() {
+            // my own weather: what I have seen fall (the renderer's memory)
+            self.snow_lying = (0.0, None);
         }
         self.weather_now = now.unwrap_or_else(|| own.clone());
     }
@@ -10217,6 +10233,7 @@ impl App {
             rain: self.weather_now.fall(),
             rain_look: aurora_render::RainLook {
                 snow_detail: self.scene.snow_detail.slot(&mut gfx.renderer).unwrap_or(0),
+                snow_lying: self.snow_lying.0,
                 ..self.weather_now.rain_look(&self.weather_wind)
             },
             look: None,

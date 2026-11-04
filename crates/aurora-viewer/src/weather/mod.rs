@@ -200,6 +200,8 @@ impl WeatherSettings {
             snow: if self.snowing() { self.flake_scale() } else { 0.0 },
             // the app gives the detail texture's slot (scene/snow_detail.rs)
             snow_detail: 0,
+            // and a region's snow so far (weather/region.rs)
+            snow_lying: 0.0,
             quality: match self.quality {
                 WeatherQuality::Low => 0,
                 WeatherQuality::Medium => 1,

@@ -1277,6 +1277,9 @@ pub struct RainLook {
     /// The lying snow's detail texture (normal and height): its bindless
     /// slot, 0 for none.
     pub snow_detail: u32,
+    /// How deep snow lies in the open at least (0..1): a region's weather
+    /// gives its whole history (who comes in late sees what has built up).
+    pub snow_lying: f32,
 }
 
 impl Default for RainLook {
@@ -1289,6 +1292,7 @@ impl Default for RainLook {
             quality: 2,
             snow: 0.0,
             snow_detail: 0,
+            snow_lying: 0.0,
         }
     }
 }

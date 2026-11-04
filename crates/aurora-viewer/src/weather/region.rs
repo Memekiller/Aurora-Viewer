@@ -374,6 +374,32 @@ impl RegionDay {
         }
     }
 
+    /// How deep snow lies in the open at `secs` (0..1) in a region of id
+    /// `region`: the last six hours of this weather played again, a minute
+    /// at a time, as the renderer builds and melts it (about ten minutes to
+    /// a full cover at full snow, fifteen to melt, two in rain). The same
+    /// for every viewer: who comes in after it has snowed a while sees
+    /// what has built up.
+    pub fn snow_lying(&self, region: uuid::Uuid, secs: f64) -> f32 {
+        const STEP: f64 = 60.0;
+        const SPAN: f64 = 6.0 * 3600.0;
+        let seed = self.schedule.seed_for(region);
+        let mut depth = 0.0f32;
+        let mut t = (secs - SPAN).floor();
+        while t < secs {
+            let fall = self.fall_at(seed, t);
+            let dt = STEP.min(secs - t) as f32;
+            if fall > 0.0 && self.state(t).precipitation == Precipitation::Snow {
+                depth += (1.0 - depth) * (1.0 - (-dt * fall / 600.0).exp());
+            } else {
+                let melt = if fall > 0.0 { 120.0 } else { 900.0 };
+                depth *= (-dt / melt).exp();
+            }
+            t += STEP;
+        }
+        depth
+    }
+
     /// The viewer's weather at `secs` in a region of id `region`: what the
     /// day sets, over the viewer's own settings (the quality, the puddles
     /// and how far they are drawn stay the viewer's). `falling` forces it to
@@ -675,6 +701,30 @@ mod tests {
         }
         let clear = RegionDay::fixed(SkyWeather::CLEAR);
         assert!((0..100).all(|i| clear.fall_at(seed, t0 + f64::from(i) * 100.0) == 0.0));
+    }
+
+    #[test]
+    fn snow_that_has_fallen_a_while_lies_for_who_comes_in_late_and_melts_after() {
+        let region = uuid::Uuid::from_u128(5);
+        let always = RegionDay::fixed(SkyWeather {
+            precipitation: Precipitation::Snow,
+            chance: 1.0,
+            amount: (1.0, 1.0),
+            ..SkyWeather::default()
+        });
+        let t = 1_800_000_000.0;
+        // six hours of heavy snow: a full cover
+        assert!(always.snow_lying(region, t) > 0.95);
+        // the same for everyone at the same moment
+        assert_eq!(always.snow_lying(region, t), always.snow_lying(region, t));
+        // never any: none
+        assert_eq!(RegionDay::fixed(SkyWeather::CLEAR).snow_lying(region, t), 0.0);
+        // rain never builds it
+        let rain = RegionDay::fixed(SkyWeather {
+            precipitation: Precipitation::Rain,
+            ..*always.keys.first().map(|k| &k.1).expect("a key")
+        });
+        assert_eq!(rain.snow_lying(region, t), 0.0);
     }
 
     #[test]

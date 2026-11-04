@@ -2197,17 +2197,21 @@ fn fs_rain_wet_update(in: RainWetOut) -> @location(0) vec4<f32> {
     // the snow lies on the topmost surface, and only where the slanted snow
     // reaches it (not in the lee of cover)
     let surface = rain_surface_height(xy, frame.camera_pos.z);
-    let snowed = top > -1e8 && surface > -1e8 && top <= surface + 0.05;
+    let seen = top > -1e8 && surface > -1e8;
+    let snowed = seen && top <= surface + 0.05;
     if (!known) {
         // new here (the camera came this way): as wet, and as snowed on, as
         // everywhere else in the open, as if it had been seen all along
         wet_h = select(-1e9, top, top > -1e8);
         amount = step.w;
-        snow_depth = select(0.0, frame.snow_cover.y, snowed);
+        // beyond the shelter map's reach (not seen yet): as everywhere in
+        // the open, until a real look
+        snow_depth = select(frame.snow_cover.y, 0.0, seen && !snowed);
     } else if (wet_h < -1e8 && top > -1e8) {
         // only assumed open so far (it came in beyond the shelter map's
         // reach): its first real look decides, at once
         wet_h = top;
+        if (!snowed) { snow_depth = 0.0; }
     } else if (falling > 0.0 && top > -1e8) {
         if (top < wet_h) {
             // something lower opened to the sky: reached from now
@@ -2227,8 +2231,12 @@ fn fs_rain_wet_update(in: RainWetOut) -> @location(0) vec4<f32> {
     // in rain, which wets what it leaves
     // it builds slowly (about ten minutes to a full cover at full snow);
     // where the wind keeps it off it neither builds nor melts at once
-    if (snowing() && falling > 0.0 && snowed) {
+    if (snowing() && falling > 0.0 && (snowed || !seen)) {
         snow_depth += (1.0 - snow_depth) * (1.0 - exp(-dt * falling / 600.0));
+        // never less than what lies everywhere in the open (the snow so
+        // far: a region's weather gives its whole history, so who comes in
+        // late sees what has built up)
+        snow_depth = max(snow_depth, frame.snow_cover.y);
     } else if (snowing() && falling > 0.0) {
         // in the lee, while it snows: it stays as it lies
     } else {
@@ -2497,9 +2505,13 @@ fn snow_lying(world: vec3<f32>) -> f32 {
     // on the topmost surface the snow landed on (the shelter map's), not
     // above it nor below it: what stands there and is not in the map
     // (avatars, what moves) stays clear, what is under cover too; and the
-    // wind turning does not move it (the height the rain reaches does)
-    let surface = rain_surface_height(world.xy, world.z);
-    if (surface < -1e8) { return 0.0; }
+    // wind turning does not move it (the height the rain reaches does).
+    // Beyond the map's reach, the height the memory keeps there
+    var surface = rain_surface_height(world.xy, world.z);
+    if (surface < -1e8) {
+        surface = textureLoad(rain_wetness, i, 0).x;
+        if (surface < -1e8) { return depth; }
+    }
     let at = world.z - surface;
     return depth * smoothstep(-0.3, -0.05, at) * (1.0 - smoothstep(0.25, 0.6, at));
 }

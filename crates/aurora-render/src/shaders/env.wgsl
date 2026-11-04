@@ -2642,8 +2642,11 @@ fn snow_landed(vertex: u32, instance: u32) -> RainOut {
     if (surface < -1e8 || surface < frame.params.y || abs(surface - cam.z) > 40.0) { return rain_splash_none(); }
     if (rain_reached_height(xy, cam.z) > surface + 0.05) { return rain_splash_none(); }
     // indoors, none on the roofs above (a roof drawn blended does not hide
-    // what lies on it)
-    if (surface > cam.z && rain_sheltered(cam + vec3<f32>(0.0, 0.0, 0.3)) > 0.5) { return rain_splash_none(); }
+    // what lies on it). The cover over the camera from the map's heights:
+    // the vertex stage has no comparison sampler (rain_sheltered), and the
+    // splash pipeline, rain's too, fails without one
+    let over_camera = rain_surface_height(cam.xy, cam.z);
+    if (surface > cam.z && over_camera > cam.z + 0.3) { return rain_splash_none(); }
     let k = rain_rand(seed + 3u);
     let real = (2.0 + 8.0 * k * k) * frame.rain_look.w * 0.001;
     let pos = vec3<f32>(xy, surface + 0.02);

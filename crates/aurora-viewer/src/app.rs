@@ -530,6 +530,9 @@ pub struct App {
     /// The region weather read from the environment in effect, keyed by its
     /// day cycle's map and sky track (parsed again only when they change).
     region_weather: Option<(usize, usize, Option<crate::weather::region::RegionDay>)>,
+    /// The Aurora Weather of a sky or day applied to myself (an editor's
+    /// "Apply only to myself"), while that local environment stays.
+    local_weather: Option<(u64, crate::weather::region::RegionDay)>,
     /// The weather's thunder and lightning.
     thunder: crate::scene::thunder::Thunder,
     /// AURORA_THUNDER_AT's strike is done.
@@ -1353,6 +1356,7 @@ impl App {
             weather_wind: Default::default(),
             weather_now: Default::default(),
             region_weather: None,
+            local_weather: None,
             thunder: Default::default(),
             thunder_demo_done: false,
             stuck_watch: None,
@@ -5267,6 +5271,16 @@ impl App {
         if let Some((weather, falling)) = preview {
             self.weather_now = RegionDay::fixed(weather).apply(own, region, secs, falling);
             return;
+        }
+        // a sky or day applied to myself with Aurora Weather: mine, whatever
+        // the regions may set
+        match &self.local_weather {
+            Some((generation, day)) if self.world.eep.local_generation() == Some(*generation) => {
+                self.weather_now = day.apply(own, region, secs, false);
+                return;
+            }
+            Some(_) => self.local_weather = None,
+            None => {}
         }
         let mut now = None;
         if own.region_weather

@@ -143,9 +143,20 @@ impl App {
                 EditorAction::ApplyLocal => {
                     // doApplyEnvironment(ACTION_APPLY_LOCAL): ENV_LOCAL, at once
                     // shown once the editor closes
+                    // its Aurora Weather with it, while it stays applied
+                    let weather = self
+                        .env_editor
+                        .doc
+                        .as_ref()
+                        .and_then(|d| crate::weather::region::SkyWeather::from_name(d.name()));
                     if let Some(doc) = &self.env_editor.doc {
                         match env_editor::frames(doc) {
-                            (Some(sky), _) => self.world.eep.apply_local_sky(sky),
+                            (Some(sky), _) => {
+                                self.world.eep.apply_local_sky(sky);
+                                self.local_weather = weather
+                                    .zip(self.world.eep.local_generation())
+                                    .map(|(w, g)| (g, crate::weather::region::RegionDay::fixed(w)));
+                            }
                             (_, Some(water)) => self.world.eep.apply_local_water(water),
                             _ => {}
                         }
@@ -232,6 +243,12 @@ impl App {
                 self.env_editor.message = Some((aurora_i18n::tr!("ui-env-editor-copied").into(), false));
             }
             (None, Some(it)) => {
+                // Save over the item with a new name: the item is renamed
+                // too, as LLSettingsVOBase::updateInventoryItem does
+                // (update_name, true for the editors' Save;
+                // indra/newview/llsettingsvo.cpp); the port kept the old name
+                // and put it back over the one typed
+                self.rename_settings_item(&it, doc.name());
                 self.env_editor.saving = Some(request);
                 self.send(NetCommand::SaveInventoryContent {
                     request,
@@ -264,13 +281,33 @@ impl App {
         }
     }
 
+    /// A settings item saved over with another name: renamed as the
+    /// inventory renames (an AIS patch of its name).
+    pub(super) fn rename_settings_item(&mut self, it: &aurora_net::inventory::InvItem, name: &str) {
+        let name = name.trim();
+        if name.is_empty() || name == it.name {
+            return;
+        }
+        match crate::world::inventory::actions::patch(&self.world.inventory, it.id, aurora_llsd::llsd_map! { "name" => name }) {
+            Ok(change) => self.apply_inventory_action(crate::ui::inventory::InvAction::Edit(change)),
+            Err(e) => log::warn!("settings item not renamed: {e}"),
+        }
+    }
+
     /// onInventoryCreated / onInventoryUpdated: the editor follows the
     /// saved item, clean.
     pub(super) fn env_editor_saved(&mut self, result: Result<aurora_net::inventory::InvItem, String>) {
         self.env_editor.saving = None;
         match result {
-            Ok(it) => {
+            Ok(mut it) => {
                 let rights = Rights::from_item(it.owner_mask, 0);
+                // saved over the item: it keeps the name given (renamed
+                // alongside), not the one the answer still carries
+                if self.env_editor.item == Some(it.id)
+                    && let Some(doc) = &self.env_editor.doc
+                {
+                    it.name = doc.name().to_owned();
+                }
                 self.world.inventory.add_items(vec![it.clone()]);
                 self.env_editor.saved(it.id, &it.name, rights);
                 log::info!("environment settings saved: {} ({})", it.name, it.asset_id);

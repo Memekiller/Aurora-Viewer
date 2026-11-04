@@ -676,6 +676,12 @@ impl EnvSelector {
         self.drop_preset();
     }
 
+    /// Which local environment is in place (it changes with each one
+    /// applied), when there is one.
+    pub fn local_generation(&self) -> Option<u64> {
+        self.local.as_ref().map(|l| l.generation)
+    }
+
     pub fn has_local(&self) -> bool {
         self.local.is_some()
     }

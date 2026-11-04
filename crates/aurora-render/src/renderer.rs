@@ -1049,6 +1049,8 @@ struct GpuTimer {
     /// Last times of the rest of the effects (ms), in [`GPU_EFFECT_PARTS`]
     /// order.
     last_effects: Option<[f32; 4]>,
+    /// Last times of the weather (ms), in [`GPU_WEATHER_PARTS`] order.
+    last_weather: Option<[f32; 4]>,
     /// AURORA_MSAA_PREPASS=alt: the variant each readback slot's frame was
     /// drawn with, and the frames measured since the variant last changed.
     slot_prepass: [std::cell::Cell<bool>; 3],
@@ -1112,7 +1114,7 @@ impl PrepassCompare {
 
 /// Timestamps of a frame: 0 first pass, 1 end of post / HUDs, then the marks.
 const GPU_TIMESTAMPS: u32 = 2 + GPU_MARKS;
-const GPU_MARKS: u32 = 28;
+const GPU_MARKS: u32 = 32;
 /// Mark indices, in frame order. Those inside the scene passes split them
 /// by draw group; a timestamp there waits for the draws before it, so the
 /// split is close but not exact (the GPU overlaps neighbouring draws).
@@ -1151,12 +1153,13 @@ const MARK_SHADOW_C1_END: u32 = 19;
 /// What `GpuElement::ShadowsDepth` is made of (`ShadowStats::gpu_ms`): the
 /// GPU culling, the three cascades, then the depth prepass with the
 /// occlusion.
-const GPU_SHADOW_PARTS: [(u32, u32); 5] = [
-    (0, MARK_SHADOW_BEGIN),
-    (MARK_SHADOW_BEGIN, MARK_SHADOW_C0_END),
-    (MARK_SHADOW_C0_END, MARK_SHADOW_C1_END),
-    (MARK_SHADOW_C1_END, MARK_SHADOWS_END),
-    (MARK_SHADOWS_END, MARK_DEPTH_END),
+const GPU_SHADOW_PARTS: [&[(u32, u32)]; 5] = [
+    &[(0, MARK_SHADOW_BEGIN)],
+    &[(MARK_SHADOW_BEGIN, MARK_SHADOW_C0_END)],
+    &[(MARK_SHADOW_C0_END, MARK_SHADOW_C1_END)],
+    // the third cascade and the projectors' maps, without the shelter map
+    &[(MARK_SHADOW_C1_END, MARK_SHELTER_BEGIN), (MARK_SHELTER_END, MARK_SHADOWS_END)],
+    &[(MARK_SHADOWS_END, MARK_DEPTH_END)],
 ];
 /// After the prepass of the multisampled depth, which opens the scene
 /// encoder (written right after `MARK_SCENE_BEGIN` without MSAA).
@@ -1179,28 +1182,54 @@ const MARK_WATER_AIR_END: u32 = 26;
 const MARK_WET_BEGIN: u32 = 27;
 const MARK_RAIN_BEGIN: u32 = 28;
 const MARK_RAIN_END: u32 = 29;
+/// Aurora Weather: around the shelter map (the last projector map, inside
+/// the shadow pass after the cascades; both written together when it is not
+/// drawn), and around the wetness and footprints memories (after scene pass
+/// A, before the scene copy).
+const MARK_SHELTER_BEGIN: u32 = 30;
+const MARK_SHELTER_END: u32 = 31;
+const MARK_WEATHER_MEMORY_BEGIN: u32 = 32;
+const MARK_WEATHER_MEMORY_END: u32 = 33;
 /// The effects beyond the occlusion and the contact shadows
 /// (`RenderStats::gpu_effects`): the planar reflections (water, mirror), with
 /// the refracted water light before them; the reflection probe face with its
 /// filtering; the scene copy, with the cut-out pass and the submerged water
 /// particles before it; the SSR.
-const GPU_EFFECT_PARTS: [(u32, u32); 4] = [
-    (MARK_CONTACT_END, MARK_WATER_AIR_BEGIN),
-    (MARK_WATER_AIR_END, MARK_REFL_END),
-    (MARK_SCENE_A_END, MARK_COPY_END),
-    (MARK_COPY_END, MARK_WET_BEGIN),
+const GPU_EFFECT_PARTS: [&[(u32, u32)]; 4] = [
+    &[(MARK_CONTACT_END, MARK_WATER_AIR_BEGIN)],
+    &[(MARK_WATER_AIR_END, MARK_REFL_END)],
+    &[
+        (MARK_SCENE_A_END, MARK_WEATHER_MEMORY_BEGIN),
+        (MARK_WEATHER_MEMORY_END, MARK_COPY_END),
+    ],
+    &[(MARK_COPY_END, MARK_WET_BEGIN)],
+];
+/// What `GpuElement::Weather` is made of (`RenderStats::gpu_weather`): the
+/// shelter map, the wetness and footprints memories, the wet ground (with
+/// the snow lying), the drops and flakes with the distant layers.
+const GPU_WEATHER_PARTS: [(u32, u32); 4] = [
+    (MARK_SHELTER_BEGIN, MARK_SHELTER_END),
+    (MARK_WEATHER_MEMORY_BEGIN, MARK_WEATHER_MEMORY_END),
+    (MARK_WET_BEGIN, MARK_SSR_END),
+    (MARK_RAIN_BEGIN, MARK_RAIN_END),
 ];
 /// GPU time ranges `(from, to)` of each kind of element, in
 /// [`GpuElement::ALL`] order; together they cover the whole frame.
 const GPU_ELEMENTS: [&[(u32, u32)]; GpuElement::ALL.len()] = [
-    // shadows and depth
-    &[(0, MARK_SHADOWS_END), GPU_DEPTH[0], GPU_DEPTH[1]],
+    // shadows and depth (the shelter map is the weather's)
+    &[
+        (0, MARK_SHELTER_BEGIN),
+        (MARK_SHELTER_END, MARK_SHADOWS_END),
+        GPU_DEPTH[0],
+        GPU_DEPTH[1],
+    ],
     // effects: SSAO, planar reflections, probes, scene copy, SSR
     &[
         (MARK_DEPTH_END, MARK_SSAO_END),
         (MARK_SSAO_END, MARK_WATER_AIR_BEGIN),
         (MARK_WATER_AIR_END, MARK_REFL_END),
-        (MARK_SCENE_A_END, MARK_COPY_END),
+        (MARK_SCENE_A_END, MARK_WEATHER_MEMORY_BEGIN),
+        (MARK_WEATHER_MEMORY_END, MARK_COPY_END),
         (MARK_COPY_END, MARK_WET_BEGIN),
     ],
     // terrain and sky
@@ -1223,8 +1252,8 @@ const GPU_ELEMENTS: [&[(u32, u32)]; GpuElement::ALL.len()] = [
         (MARK_BLEND_END, MARK_RAIN_BEGIN),
         (MARK_RAIN_END, MARK_SCENE_END),
     ],
-    // weather (rain prototype): the wet ground, the drops
-    &[(MARK_WET_BEGIN, MARK_SSR_END), (MARK_RAIN_BEGIN, MARK_RAIN_END)],
+    // weather
+    &GPU_WEATHER_PARTS,
     // post: glow, TAA, tonemap, SMAA and screen-space HUDs
     &[(MARK_WATER_END, MARK_GLOW_END), (MARK_SCENE_END, 1)],
 ];
@@ -1275,6 +1304,7 @@ impl GpuTimer {
             last_contact: None,
             last_bloom: None,
             last_effects: None,
+            last_weather: None,
             slot_prepass: Default::default(),
             compare: PrepassCompare::default(),
         }
@@ -1299,13 +1329,15 @@ impl GpuTimer {
                                 *t = ranges.iter().map(|&(a, b)| ms(a, b)).sum();
                             }
                             self.last_elements = Some(e);
-                            self.last_shadow_parts = Some(GPU_SHADOW_PARTS.map(|(a, b)| ms(a, b)));
+                            let sum = |ranges: &[(u32, u32)]| ranges.iter().map(|&(a, b)| ms(a, b)).sum::<f32>();
+                            self.last_shadow_parts = Some(GPU_SHADOW_PARTS.map(sum));
                             let d = GPU_DEPTH.map(|(a, b)| ms(a, b));
                             self.last_depth = Some(d);
                             self.last_ssao = Some(ms(MARK_DEPTH_END, MARK_SSAO_END));
                             self.last_contact = Some(ms(MARK_SSAO_END, MARK_CONTACT_END));
                             self.last_bloom = Some(ms(MARK_BLOOM_BEGIN, MARK_BLOOM_END));
-                            self.last_effects = Some(GPU_EFFECT_PARTS.map(|(a, b)| ms(a, b)));
+                            self.last_effects = Some(GPU_EFFECT_PARTS.map(sum));
+                            self.last_weather = Some(GPU_WEATHER_PARTS.map(|(a, b)| ms(a, b)));
                             if msaa_prepass() == MsaaPrepass::Alternate {
                                 let mut times = [0.0; COMPARE_KEYS.len()];
                                 times[0] = ms(0, 1);
@@ -7309,7 +7341,10 @@ impl Backend {
             mark(&mut encoder, MARK_SHADOW_C0_END);
             mark(&mut encoder, MARK_SHADOW_C1_END);
         }
-        let shelter_only = !f.shadows && self.rain_shelter(f);
+        let shelter = self.rain_shelter(f);
+        let shelter_only = !f.shadows && shelter;
+        // MARK_SHELTER_BEGIN / END written (once, in the Spots step)
+        let mut shelter_marked = false;
         if f.shadows || shelter_only {
             // What the atlas passes draw, in order: each cascade in its
             // tile, then the projectors' maps. One pass, unless the
@@ -7411,6 +7446,11 @@ impl Backend {
                                 if vp.is_none() {
                                     continue;
                                 }
+                                // the shelter map, last: timed to the end of the step
+                                if shelter && k == RAIN_SHELTER_MAP {
+                                    pass_mark(&mut pass, MARK_SHELTER_BEGIN);
+                                    shelter_marked = true;
+                                }
                                 let (x, y) = (size + k as u32 * half, size);
                                 pass.set_viewport(x as f32, y as f32, half as f32, half as f32, 0.0, 1.0);
                                 pass.set_scissor_rect(x, y, half, half);
@@ -7427,6 +7467,11 @@ impl Backend {
                                 }
                                 draw_bin(&mut pass, None, BIN_SPOT + k, BIN_SPOT + k);
                             }
+                            if !shelter_marked {
+                                pass_mark(&mut pass, MARK_SHELTER_BEGIN);
+                                shelter_marked = true;
+                            }
+                            pass_mark(&mut pass, MARK_SHELTER_END);
                         }
                     }
                 }
@@ -7440,6 +7485,10 @@ impl Backend {
             }
         }
 
+        if !shelter_marked {
+            mark(&mut encoder, MARK_SHELTER_BEGIN);
+            mark(&mut encoder, MARK_SHELTER_END);
+        }
         prof.mark("shadows");
         mark(&mut encoder, MARK_SHADOWS_END);
         let (pre_opaque, pre_opaque_2s) = if draw_lists.portal_clipping {
@@ -8117,6 +8166,7 @@ impl Backend {
         // rain prototype: the wetness memory, from the last one and the
         // shelter map, then copied where it is read
         let rain_wet = !f.cutout && self.rain_wet.active();
+        mark(&mut encoder, MARK_WEATHER_MEMORY_BEGIN);
         if rain_wet {
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -8183,6 +8233,7 @@ impl Backend {
                 size,
             );
         }
+        mark(&mut encoder, MARK_WEATHER_MEMORY_END);
         if water_particles > 0 && above_water_possible {
             let mut pass = begin_scene_b(&mut encoder, &self.targets, "submerged water particles", false, false);
             bind_mesh(&mut pass, &self.groups.a);
@@ -9280,6 +9331,7 @@ impl Backend {
         stats.gpu_contact = self.timer.as_ref().and_then(|t| t.last_contact);
         stats.gpu_bloom = self.timer.as_ref().and_then(|t| t.last_bloom);
         stats.gpu_effects = self.timer.as_ref().and_then(|t| t.last_effects);
+        stats.gpu_weather = self.timer.as_ref().and_then(|t| t.last_weather);
         if profile_frames && let Some(e) = stats.gpu_elements {
             let mut out = String::new();
             for (el, ms) in GpuElement::ALL.iter().zip(e) {
@@ -9403,6 +9455,89 @@ impl Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The frame's timestamps in the order the GPU writes them (every mark
+    /// is written each frame, empty spans included).
+    const MARK_ORDER: [u32; GPU_TIMESTAMPS as usize] = [
+        0,
+        MARK_SHADOW_BEGIN,
+        MARK_SHADOW_C0_END,
+        MARK_SHADOW_C1_END,
+        MARK_SHELTER_BEGIN,
+        MARK_SHELTER_END,
+        MARK_SHADOWS_END,
+        MARK_DEPTH_END,
+        MARK_SSAO_END,
+        MARK_CONTACT_END,
+        MARK_WATER_AIR_BEGIN,
+        MARK_WATER_AIR_END,
+        MARK_REFL_END,
+        MARK_SCENE_BEGIN,
+        MARK_WATER_INTERFACE_END,
+        MARK_DEPTH_MSAA_END,
+        MARK_SKY_END,
+        MARK_TERRAIN_END,
+        MARK_OBJECTS_END,
+        MARK_SCENE_A_END,
+        MARK_WEATHER_MEMORY_BEGIN,
+        MARK_WEATHER_MEMORY_END,
+        MARK_COPY_END,
+        MARK_WET_BEGIN,
+        MARK_SSR_END,
+        MARK_WATER_END,
+        MARK_GLOW_END,
+        MARK_BLEND_END,
+        MARK_RAIN_BEGIN,
+        MARK_RAIN_END,
+        MARK_SCENE_END,
+        MARK_BLOOM_BEGIN,
+        MARK_BLOOM_END,
+        1,
+    ];
+
+    /// The steps of `MARK_ORDER` a range covers.
+    fn steps(range: (u32, u32)) -> std::ops::Range<usize> {
+        let at = |m: u32| MARK_ORDER.iter().position(|&x| x == m).expect("a mark in MARK_ORDER");
+        let (a, b) = (at(range.0), at(range.1));
+        assert!(a < b, "range {range:?} runs backwards");
+        a..b
+    }
+
+    #[test]
+    fn gpu_elements_cover_the_frame_once_and_their_parts_stay_inside() {
+        let mut marks = MARK_ORDER.to_vec();
+        marks.sort();
+        marks.dedup();
+        assert_eq!(marks.len(), GPU_TIMESTAMPS as usize, "every timestamp once");
+        let mut covered = vec![0u32; MARK_ORDER.len() - 1];
+        let mut owner = vec![usize::MAX; MARK_ORDER.len() - 1];
+        for (e, ranges) in GPU_ELEMENTS.iter().enumerate() {
+            for &r in ranges.iter() {
+                for s in steps(r) {
+                    covered[s] += 1;
+                    owner[s] = e;
+                }
+            }
+        }
+        for (s, n) in covered.iter().enumerate() {
+            assert_eq!(*n, 1, "step {s} ({} to {}) counted {n} times", MARK_ORDER[s], MARK_ORDER[s + 1]);
+        }
+        let inside = |ranges: &[(u32, u32)], element: GpuElement| {
+            let e = GpuElement::ALL.iter().position(|&x| x == element).expect("an element");
+            for &r in ranges {
+                assert!(steps(r).all(|s| owner[s] == e), "{r:?} outside {element:?}");
+            }
+        };
+        for part in GPU_SHADOW_PARTS {
+            inside(part, GpuElement::ShadowsDepth);
+        }
+        inside(&GPU_DEPTH, GpuElement::ShadowsDepth);
+        inside(&GPU_WEATHER_PARTS, GpuElement::Weather);
+        for part in GPU_EFFECT_PARTS {
+            inside(part, GpuElement::Effects);
+        }
+        inside(&[(MARK_BLOOM_BEGIN, MARK_BLOOM_END)], GpuElement::Post);
+    }
 
     #[test]
     fn blend_runs_preserve_order_and_subranges_and_keep_single_sided_faces_culled() {

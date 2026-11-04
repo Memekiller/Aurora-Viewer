@@ -10645,6 +10645,12 @@ thread.
     reflection probe face with its filtering, the copy of the scene for
     refraction and SSR (the cut-out pass and the submerged water particles
     are counted with it), and SSR;
+  - `g_shelter`, `g_weather_memory`, `g_wet_ground`, `g_drops`: what
+    `g_weather` is made of: the shelter map (drawn with the shadows while
+    it rains or snows, or the ground is still wet), the wetness and
+    footprints memories, the wet ground with the snow lying (deep snow
+    included), and the drops or flakes with their splashes and the distant
+    layers;
   - `g_bloom`: the bloom levels alone (`AURORA_BLOOM`, 0 while off), also
     counted in `g_post`;
   - the draws and draw commands, the objects synced / rebuilt (`synced`,

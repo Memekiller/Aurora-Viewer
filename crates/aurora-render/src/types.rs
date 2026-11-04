@@ -1666,6 +1666,10 @@ pub struct RenderStats {
     /// the scene copy (with the cut-out pass and the submerged water
     /// particles), the SSR.
     pub gpu_effects: Option<[f32; 4]>,
+    /// GPU time of [`GpuElement::Weather`] in parts (ms): the shelter map,
+    /// the wetness and footprints memories, the wet ground (with the snow
+    /// lying), the drops and flakes with the distant layers.
+    pub gpu_weather: Option<[f32; 4]>,
     /// CPU time of each step of the renderer's frame (ms), in
     /// [`RENDER_PHASES`] order; "acquire" is the wait for the swapchain.
     /// Spent on the render thread when there is one (then they are those
@@ -1751,7 +1755,8 @@ pub enum GpuElement {
     Water,
     /// Blended faces and particles.
     Transparent,
-    /// Rain prototype: the drops and the wet ground.
+    /// Aurora Weather: the shelter map, the memories, the wet ground and
+    /// the snow lying, the drops and flakes (`RenderStats::gpu_weather`).
     Weather,
     /// Glow, TAA, tone mapping, SMAA.
     Post,

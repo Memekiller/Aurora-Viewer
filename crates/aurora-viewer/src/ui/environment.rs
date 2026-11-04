@@ -757,7 +757,8 @@ pub fn rotation_from(azimuth: f32, elevation: f32) -> Quat {
 
 /// A row's label in the label column, with its tip.
 fn row_label(ui: &mut egui::Ui, p: &Palette, text: &str, tip: &str) {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(LABEL_W, 20.0), egui::Sense::hover());
+    let width = ui.data(|d| d.get_temp::<f32>(label_width_id())).unwrap_or(LABEL_W);
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, 20.0), egui::Sense::hover());
     ui.painter().text(
         rect.left_center(),
         egui::Align2::LEFT_CENTER,
@@ -766,6 +767,38 @@ fn row_label(ui: &mut egui::Ui, p: &Palette, text: &str, tip: &str) {
         p.ink,
     );
     resp.on_hover_text(tip);
+}
+
+/// Where the Weather section keeps its label column's width this frame.
+fn label_width_id() -> egui::Id {
+    egui::Id::new("environment_weather_label_width")
+}
+
+/// The Weather section's label column: as wide as its longest label in the
+/// language shown (at least the window's own), so that none runs under its
+/// control.
+fn weather_label_width(ui: &egui::Ui) -> f32 {
+    let font = egui::FontId::proportional(12.5);
+    let labels = [
+        aurora_i18n::tr!("ui-weather-precipitation"),
+        aurora_i18n::tr!("ui-weather-amount"),
+        aurora_i18n::tr!("ui-weather-wind"),
+        aurora_i18n::tr!("ui-weather-gusts"),
+        aurora_i18n::tr!("ui-weather-wind-from"),
+        aurora_i18n::tr!("ui-weather-flake-size"),
+        aurora_i18n::tr!("ui-weather-snow-settles"),
+        aurora_i18n::tr!("ui-weather-snow-distance"),
+        aurora_i18n::tr!("ui-weather-puddles"),
+        aurora_i18n::tr!("ui-weather-distance"),
+        aurora_i18n::tr!("ui-weather-thunder"),
+        aurora_i18n::tr!("ui-weather-strikes"),
+        aurora_i18n::tr!("ui-weather-quality"),
+    ];
+    let widest = labels
+        .iter()
+        .map(|l| ui.fonts_mut(|f| f.layout_no_wrap(l.to_string(), font.clone(), egui::Color32::PLACEHOLDER).size().x))
+        .fold(0.0f32, f32::max);
+    (widest + 10.0).max(LABEL_W).ceil()
 }
 
 /// The compass point nearest `degrees` (clockwise from north).
@@ -794,7 +827,12 @@ fn weather_section(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
     let title = crate::ui::options::aurora_word(p, aurora_i18n::tr!("ui-weather-aurora"), font, p.ink);
     widgets::collapsing(ui, p, "environment_weather", title, false, |ui| {
         ui.spacing_mut().item_spacing = Vec2::new(4.0, 6.0);
-        ui.spacing_mut().slider_width = COMBO_W - 50.0;
+        // the label column as wide as its longest label, the sliders the
+        // narrower by as much, so that they keep ending where they did
+        let label_w = weather_label_width(ui);
+        ui.data_mut(|d| d.insert_temp(label_width_id(), label_w));
+        let extra = label_w - LABEL_W;
+        ui.spacing_mut().slider_width = COMBO_W - 50.0 - extra;
         // what falls
         ui.horizontal(|ui| {
             row_label(
@@ -856,7 +894,7 @@ fn weather_section(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
             );
             widgets::checkbox(ui, p, &mut w.wind_follow_region, aurora_i18n::tr!("ui-weather-wind-region"));
             ui.add_enabled_ui(!w.wind_follow_region, |ui| {
-                ui.spacing_mut().slider_width = COMBO_W - 140.0;
+                ui.spacing_mut().slider_width = (COMBO_W - 140.0 - extra).max(40.0);
                 ui.add(
                     egui::Slider::new(&mut w.wind_from, 0.0..=355.0)
                         .step_by(5.0)

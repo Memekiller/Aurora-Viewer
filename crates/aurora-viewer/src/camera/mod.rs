@@ -172,6 +172,8 @@ pub struct FrameInput {
     /// Sitting and optional eye following consume it after skeleton evaluation.
     pub eye_offset: Option<Vec3>,
     pub draw_distance: f32,
+    /// The main region's width (LLWorld::mWidth, which follows the region).
+    pub region_width: f32,
     pub aspect: f32,
 }
 
@@ -312,6 +314,7 @@ pub struct Camera {
     avatar: AvatarFrame,
     head: Vec3,
     draw_distance: f32,
+    region_width: f32,
     /// DisableCameraConstraints, as of the last frame.
     unconstrained: bool,
     /// Our avatar's id (the alt-camera focus object of unlockView).
@@ -387,6 +390,7 @@ impl Default for Camera {
             },
             head: start + Vec3::Z * 0.7,
             draw_distance: 128.0,
+            region_width: REGION_WIDTH,
             unconstrained: false,
             own: Uuid::nil(),
             dt: 0.0,
@@ -792,6 +796,32 @@ impl Camera {
         self.set_camera_pos_and_focus(camera, focus, object, s);
     }
 
+    /// Build › Focus on Selection (H) and Zoom to Selection (Shift+H).
+    /// Port of handle_look_at_selection (indra/newview/llviewermenu.cpp,
+    /// originally LGPL 2.1): focus moves the focus point to the selection's
+    /// centre; zoom also brings the camera to the distance that frames its
+    /// box, never farther than it already is.
+    #[allow(clippy::too_many_arguments)]
+    pub fn look_at_selection(
+        &mut self,
+        center: Vec3,
+        extent: f32,
+        object: Option<(Uuid, FocusObject)>,
+        zoom: bool,
+        aspect: f32,
+        agent: &mut AgentState,
+        s: &CameraSettings,
+    ) {
+        self.set_focus_on_avatar(false, true, true, agent, s);
+        if zoom {
+            let distance = selection_distance(extent, s.fov, aspect).min((self.position - center).length());
+            let dir = (self.position - center).normalize_or(-self.forward());
+            self.set_camera_pos_and_focus(center + dir * distance, center, object, s);
+        } else {
+            self.set_focus_global(Some(center), object.map(|o| o.0), object.map(|o| o.1), s);
+        }
+    }
+
     /// Context menu "Zoom" (handle_look_at_selection "zoom"): the focus stays
     /// attached to `object` when there is one, so the camera follows it as
     /// it moves (TrackFocusObject).
@@ -864,6 +894,8 @@ impl Camera {
             self.change_to_default(agent, s);
         }
         if reset_camera {
+            // LLAgentCamera::resetView resets the camera roll too.
+            self.roll = 0.0;
             if !steering && self.third_person() {
                 // leaving mouse steering: the pitch fades out
                 self.pitch *= 1.0 - interpolant(0.3, self.dt);
@@ -1104,7 +1136,7 @@ impl Camera {
         }
         MAX_CAMERA_DISTANCE_FROM_OBJECT
             .min(self.draw_distance - 1.0)
-            .min(REGION_WIDTH - CAMERA_FUDGE_FROM_OBJECT)
+            .min(self.region_width - CAMERA_FUDGE_FROM_OBJECT)
     }
 
     /// Distance limits of the alt camera for its focus (min, max).
@@ -1466,6 +1498,7 @@ impl Camera {
         let dt = f.dt.max(0.0);
         self.dt = dt;
         self.draw_distance = f.draw_distance;
+        self.region_width = f.region_width;
         self.unconstrained = s.disable_constraints;
         self.own = world.agent_id;
         self.avatar = avatar_frame(world, s, f.now);
@@ -2027,6 +2060,15 @@ pub fn focus_object_geom(world: &World, id: &Uuid, now: Instant) -> Option<Focus
     })
 }
 
+/// The camera distance that frames a selection whose box diagonal is
+/// `extent` (handle_look_at_selection: PADDING_FACTOR 1.75 over the wider
+/// angle of view, at least 0.1 radian).
+pub fn selection_distance(extent: f32, fov: f32, aspect: f32) -> f32 {
+    const PADDING_FACTOR: f32 = 1.75;
+    let angle = if aspect > 1.0 { fov * aspect } else { fov }.max(0.1);
+    extent * PADDING_FACTOR / angle.atan()
+}
+
 /// The alt-camera focus object of a clicked object: an attachment focuses
 /// its avatar (LLAgentCamera::setFocusGlobal); HUDs are not focusable.
 pub fn pick_focus_object(world: &World, idx: usize, now: Instant) -> Option<(Uuid, FocusObject)> {
@@ -2219,6 +2261,7 @@ mod tests {
             edit_tracking: None,
             eye_offset: None,
             draw_distance: 128.0,
+            region_width: REGION_WIDTH,
             aspect: 1.0,
         }
     }
@@ -3165,9 +3208,11 @@ mod tests {
         cam.orbit_drag(-200.0, 60.0, 1.0, &mut agent);
         cam.zoom_fraction = 0.4;
         cam.fov_zoom = 0.3;
+        cam.roll = 0.4;
         let heading = agent.yaw;
         cam.reset_to_defaults(&mut agent, &s);
         assert_eq!((cam.orbit_yaw, cam.pitch, cam.zoom_fraction, cam.fov_zoom), (0.0, 0.0, 1.0, 0.0));
+        assert_eq!(cam.roll, 0.0, "reset levels the camera");
         assert_eq!(agent.yaw, heading, "the avatar keeps its heading");
         w.agent = agent;
         settle(&mut cam, &mut w, &s);
@@ -3629,7 +3674,7 @@ mod tests {
                 assert!(pan.cross(Vec3::Y).length() < 1e-6);
                 camera.pan_edit(pan, &mut w.agent, &s);
                 tool.cam = projection(&camera);
-                tool.update(&mut w, &settings, cursor, false, Mods::default());
+                tool.update(&mut w, &settings, None, cursor, false, Mods::default());
                 camera.update(&mut w, &s, &f);
                 tool.cam = projection(&camera);
                 let position = Scene::object_transform(&w, idx, Instant::now(), 0).unwrap().0;

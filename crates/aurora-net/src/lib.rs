@@ -22,6 +22,7 @@ mod im_reply;
 pub mod inventory;
 pub mod land;
 pub mod land_tool;
+pub mod local_bakes;
 pub mod login;
 pub mod lsl_syntax;
 pub mod message_split;
@@ -48,6 +49,7 @@ pub mod task_inventory;
 pub mod terrain;
 #[cfg(test)]
 mod test_http;
+pub mod text_validation;
 pub mod throttle;
 pub mod transition;
 pub mod types;

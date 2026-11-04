@@ -30,6 +30,7 @@ use crate::world::landmarks::{Landmarks, Resolved};
 use crate::world::place_details::{Source as Profile, Stage};
 use crate::world::place_snapshots::Spot;
 use crate::world::tphistory::{self, HistoryItem};
+use crate::world::worldmap::WorldMap;
 use aurora_llsd::llsd_map;
 use aurora_net::inventory::operations::{CopyItem, Mutation, Operation};
 use egui::{Color32, FontId, Pos2, Rect, Sense, Vec2};
@@ -225,13 +226,13 @@ fn badge(ui: &egui::Ui, p: &Palette, rating: Option<u8>, rect: Rect) {
 }
 
 /// "Region (x, y, z)".
-fn region_line(place: &Place) -> String {
+fn region_line(place: &Place, map: &WorldMap) -> String {
     let region = if place.region.is_empty() {
         place_details::loading().to_owned()
     } else {
         place.region.clone()
     };
-    match place.region_pos() {
+    match place.region_pos(map) {
         Some(pos) => format!("{region} ({}, {}, {})", pos.x.round(), pos.y.round(), pos.z.round()),
         None => region,
     }
@@ -667,7 +668,7 @@ impl PlacesUi {
                     p,
                     "pencil-filled",
                     aurora_i18n::tr!("common-rename"),
-                    actions::renameable(inv, f.id, &no_protection()),
+                    actions::renameable(inv, f.id),
                 ) {
                     self.aurora.rename_folder = Some((f.id, f.name.clone()));
                 }
@@ -817,7 +818,7 @@ impl PlacesUi {
                     self.select(key, place, &world.inventory, history, actions);
                 }
             }
-            if out.resp.double_clicked() {
+            if out.resp.double_clicked() && Self::teleport_allowed(world, key, place) {
                 self.teleport(key, place, &world.inventory, history);
             }
             if out.star
@@ -884,6 +885,22 @@ impl PlacesUi {
         });
     }
 
+    /// RLVa leaves this place's Teleport allowed: a visit or a place link by
+    /// its position (LLPanelPlaces, LLTeleportHistoryPanel:
+    /// canTeleportToLocation), a landmark under @tplm (LLLandmarksPanel).
+    fn teleport_allowed(world: &World, key: Key, place: &Place) -> bool {
+        if let Key::Visit(i) = key
+            && let Some(entry) = world.tp_storage.items.get(i)
+        {
+            return world.rlva_can_teleport_global(entry.global);
+        }
+        if place.item.is_some() {
+            world.rlva_can_teleport_landmark()
+        } else {
+            place.global.is_none_or(|g| world.rlva_can_teleport_global(g))
+        }
+    }
+
     /// TeleportFromLandmark for a landmark, TeleportToHistoryEntry for a
     /// place of the history. A line of the history goes back to where that
     /// visit arrived, even when it shows the landmark it was a visit of
@@ -910,7 +927,13 @@ impl PlacesUi {
     fn place_menu(&mut self, ui: &mut egui::Ui, p: &Palette, world: &World, key: Key, place: &Place, actions: &mut Vec<PlacesAction>) {
         let inv = &world.inventory;
         let history = &world.tp_storage.items;
-        if menu::item(ui, p, "location-filled", aurora_i18n::tr!("common-teleport-3")) {
+        if menu::item_if(
+            ui,
+            p,
+            "location-filled",
+            aurora_i18n::tr!("common-teleport-3"),
+            Self::teleport_allowed(world, key, place),
+        ) {
             self.teleport(key, place, inv, history);
         }
         if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map"), place.global.is_some())
@@ -945,7 +968,7 @@ impl PlacesUi {
                 }
                 actions.push(PlacesAction::Edit(change));
             }
-            let renameable = place.item.is_some_and(|i| actions::renameable(inv, i, &no_protection()));
+            let renameable = place.item.is_some_and(|i| actions::renameable(inv, i));
             if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("common-rename"), renameable) {
                 self.aurora.rename = Some((key, place.name.clone()));
             }
@@ -1105,7 +1128,7 @@ impl PlacesUi {
             if let Some(r) = place.rating {
                 widgets::maturity_badge_of(ui, p, r, 16.0);
             }
-            ui.label(egui::RichText::new(region_line(&place)).size(12.5).color(p.muted));
+            ui.label(egui::RichText::new(region_line(&place, &c.world.map)).size(12.5).color(p.muted));
         });
         ui.add_space(12.0);
         // Teleport, Map, Copy SLurl, more
@@ -1114,13 +1137,14 @@ impl PlacesUi {
             let small = 28.0;
             let map_w = widgets::action_button_fit(ui, "map", aurora_i18n::tr!("common-map"));
             let tp_w = (width - map_w - small * 2.0 - 18.0).max(90.0);
-            if widgets::action_button(
+            if widgets::action_button_if(
                 ui,
                 p,
                 "location-filled",
                 aurora_i18n::tr!("common-teleport-3"),
                 widgets::ActionKind::Primary,
                 Vec2::new(tp_w, small),
+                Self::teleport_allowed(world, key, &place),
             )
             .clicked()
             {
@@ -1261,9 +1285,7 @@ impl PlacesUi {
                 let g = line(ui, &place.name, 15.0, p.ink, true, width);
                 let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, g.size().y), Sense::click());
                 ui.painter().galley(rect.min, g, p.ink);
-                let renameable = place
-                    .item
-                    .is_some_and(|i| actions::renameable(&world.inventory, i, &no_protection()));
+                let renameable = place.item.is_some_and(|i| actions::renameable(&world.inventory, i));
                 if renameable && resp.double_clicked() {
                     self.aurora.rename = Some((key, place.name.clone()));
                 }
@@ -1321,7 +1343,7 @@ impl PlacesUi {
         if self.aurora.note.as_ref().is_none_or(|(k, _)| *k != key) {
             self.aurora.note = Some((key, place.note.clone()));
         }
-        let editable = place.item.is_some_and(|i| actions::renameable(inv, i, &no_protection()));
+        let editable = place.item.is_some_and(|i| actions::renameable(inv, i));
         if let Some((_, text)) = self.aurora.note.as_mut() {
             let r = crate::ui::widgets::text_field(ui, editable, text, |b, _| {
                 egui::TextEdit::multiline(b)
@@ -1540,7 +1562,17 @@ impl PlacesUi {
             ui.spacing_mut().item_spacing.x = 6.0;
             let tp = aurora_i18n::tr!("common-teleport-3");
             let tw = widgets::action_button_fit(ui, "location-filled", tp);
-            if widgets::action_button(ui, p, "location-filled", tp, widgets::ActionKind::Primary, Vec2::new(tw, 26.0)).clicked() {
+            if widgets::action_button_if(
+                ui,
+                p,
+                "location-filled",
+                tp,
+                widgets::ActionKind::Primary,
+                Vec2::new(tw, 26.0),
+                Self::teleport_allowed(world, key, place),
+            )
+            .clicked()
+            {
                 self.teleport(key, place, &world.inventory, history);
             }
             let mw = widgets::action_button_fit(ui, "map", aurora_i18n::tr!("common-map"));
@@ -1737,7 +1769,7 @@ fn place_row(
     wide: bool,
 ) -> RowOut {
     let subtitle = if wide {
-        let region = region_line(place);
+        let region = region_line(place, &c.world.map);
         if place.is_landmark() {
             region
         } else {

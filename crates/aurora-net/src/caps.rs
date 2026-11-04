@@ -23,6 +23,8 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "ChatSessionRequest",
     "CharacterProperties",
     "CopyInventoryFromNotecard",
+    // a new folder on a grid without AIS (LLInventoryModel::createNewCategory)
+    "CreateInventoryCategory",
     "DeclineFriendship",
     "DeclineGroupInvite",
     // the Region / Estate window (llviewerregion.cpp buildCapabilityNames):
@@ -117,6 +119,8 @@ pub const REQUESTED_CAPS: &[&str] = &[
     // (LLNearbyVoiceModeration)
     "SpatialVoiceModerationRequest",
     "UpdateAvatarAppearance",
+    // our own bakes, where the region does not bake (OpenSim)
+    "UploadBakedTexture",
     // the maturity preference (LLAgent::sendMaturityPreferenceToServer)
     "UpdateAgentInformation",
     "UpdateAgentLanguage",
@@ -133,6 +137,12 @@ pub const REQUESTED_CAPS: &[&str] = &[
     // Preferences › Privacy: online visibility, offline IMs by e-mail
     // (LLAgent::sendAgentUserInfoRequest / sendAgentUpdateUserInfo)
     "UserInfo",
+    // OpenSim's flag for PBR terrain, not a capability: only a viewer that
+    // asks for it gets the region's terrain materials (TerrainPBR1-4) in
+    // RegionHandshake's TerrainDetail0-3, the others get the legacy terrain
+    // textures. The Legacy Viewer asks for it everywhere
+    // (LLViewerRegionImpl::buildCapabilityNames); other grids ignore it.
+    "VETPBR",
     "ViewerAsset",
     "ViewerStats",
     "VoiceSignalingRequest",
@@ -225,6 +235,12 @@ mod language_tests {
         ] {
             assert!(REQUESTED_CAPS.contains(&cap), "{cap}");
         }
+    }
+
+    #[test]
+    fn opensim_pbr_terrain_is_asked_for() {
+        // OpenSim sends PBR terrain materials only to viewers asking for it
+        assert!(REQUESTED_CAPS.contains(&"VETPBR"));
     }
 
     #[test]

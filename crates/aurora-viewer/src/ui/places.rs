@@ -246,11 +246,8 @@ fn slurl_at(world: &World, global: DVec3, title: &str) -> Option<String> {
         .map(|(_, s)| s.name.clone())
         .or_else(|| title.rsplit(", ").next().map(str::to_owned))
         .filter(|r| !r.is_empty())?;
-    let pos = glam::Vec3::new(
-        global.x.rem_euclid(256.0) as f32,
-        global.y.rem_euclid(256.0) as f32,
-        global.z as f32,
-    );
+    let (x, y) = world.map.local_xy(global.x, global.y);
+    let pos = glam::Vec3::new(x as f32, y as f32, global.z as f32);
     Some(crate::slurl::make(&region, pos))
 }
 
@@ -295,6 +292,16 @@ impl PlacesUi {
         self.selected = None;
         self.aurora.open_tab(self.tab);
         self.raise = true;
+    }
+
+    /// The window, when open, shows the teleport history: the History tab
+    /// of the classic look (`classic`) or of Aurora's.
+    pub fn history_shown(&self, classic: bool) -> bool {
+        if classic {
+            self.tab == TAB_HISTORY
+        } else {
+            self.aurora.source == aurora::Source::History
+        }
     }
 
     /// Bring the window to the front (a profile was opened).
@@ -1094,7 +1101,7 @@ impl PlacesUi {
                 p,
                 aurora_i18n::tr!("common-teleport"),
                 aurora_i18n::tr!("ui-places-teleport-to-a-location-of-your-choice"),
-                place.global.is_some(),
+                place.global.is_some() && place_details::teleport_allowed(place, world),
                 w,
             ) && let Some(a) = place_details::teleport_action(place, world)
             {

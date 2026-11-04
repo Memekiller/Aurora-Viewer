@@ -107,6 +107,9 @@ struct Flash {
     leader: f32,
     strokes: Vec<(f32, f32)>,
     bolt: Option<Bolt>,
+    /// Where it struck: the way from the viewer (unit), how far (m).
+    from: Vec2,
+    distance: f32,
 }
 
 /// One segment of a bolt, in the strike's own frame (m): x across the view,
@@ -152,6 +155,9 @@ pub struct Thunder {
     /// How bright the lightning is now (0: none; about 1 for a strike a
     /// kilometre away).
     pub flash: f32,
+    /// Where the brightest flash now is: the way to it (unit), and the sine
+    /// of its glow's height in the sky (the cloud base seen from here).
+    pub flash_at: (Vec2, f32),
 }
 
 impl Default for Thunder {
@@ -168,6 +174,7 @@ impl Default for Thunder {
             played: 0,
             was_active: false,
             flash: 0.0,
+            flash_at: (Vec2::X, 0.3),
         }
     }
 }
@@ -276,6 +283,8 @@ impl Thunder {
             leader,
             strokes,
             bolt,
+            from,
+            distance: d,
         });
         // the thunder: a crack near, a roll farther, the far roll far off;
         // quieter and duller with the distance
@@ -330,20 +339,29 @@ impl Thunder {
         // the flash: each stroke lit at once, fading in about a tenth of a
         // second, and a dimmer glow of the clouds after
         let mut flash = 0.0;
+        let mut brightest = (0.0f32, self.flash_at);
         self.flashes.retain(|f| {
             let t = now.saturating_duration_since(f.at).as_secs_f32();
             if t > 1.5 {
                 return false;
             }
+            let mut this = 0.0;
             for &(at, amp) in &f.strokes {
                 if t >= at {
                     let k = t - at;
-                    flash += amp * ((-k / 0.06).exp() + 0.25 * (-k / 0.4).exp());
+                    this += amp * ((-k / 0.06).exp() + 0.25 * (-k / 0.4).exp());
                 }
             }
+            if this > brightest.0 {
+                // the cloud base, about 1.5 km up, seen from here
+                let height = (1500.0 / f.distance.max(1.0)).atan().sin();
+                brightest = (this, (f.from, height));
+            }
+            flash += this;
             true
         });
         self.flash = flash;
+        self.flash_at = brightest.1;
 
         // the thunder due
         let (due, later): (Vec<Clap>, Vec<Clap>) = self.claps.iter().partition(|c| now >= c.at);

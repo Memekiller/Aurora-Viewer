@@ -379,11 +379,26 @@ fn sky_full_at(dir: vec3<f32>, foot: SkyFootprint) -> vec3<f32> {
     return col;
 }
 
+// The lightning lights the clouds where it struck: brightest toward it, at
+// the height of the cloud base seen from here (low for a far strike, high
+// for a near one), spreading over the sky, a faint flash all round.
+fn lightning_glow(dir: vec3<f32>) -> vec3<f32> {
+    let l = frame.lightning;
+    if (l.w <= 0.001) { return vec3<f32>(0.0); }
+    let flat_len = length(dir.xy);
+    let toward = select(0.0, max(dot(dir.xy / max(flat_len, 1e-4), l.xy), 0.0), flat_len > 1e-4);
+    let around = pow(toward, 3.0);
+    let height = exp(-pow((dir.z - l.z) / 0.3, 2.0));
+    let above = smoothstep(-0.05, 0.08, dir.z);
+    return vec3<f32>(0.78, 0.82, 1.0) * l.w * above * (around * height * 1.6 + 0.15);
+}
+
 fn sky_pixel(in: SkyOut) -> vec4<f32> {
     // from the camera, not region positions minus the camera: those rounded
     // differently each frame and the sky shook as it moved (#1059)
     let dir = sky_ray(in.ndc);
     var col = sky_full_at(dir, sky_footprint(in.ndc, dir));
+    col += lightning_glow(dir);
     if (camera_underwater()) {
         let wf = water_fog_view(dir * 512.0, frame.water_normal.w);
         col = col * wf.transmission + wf.color;

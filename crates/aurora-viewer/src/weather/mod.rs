@@ -210,6 +210,8 @@ impl WeatherSettings {
             snow_lying: 0.0,
             footprints: self.snow_footprints && self.snow_settles,
             ice: self.ice && self.puddles,
+            // the app lights the sky where the lightning struck (thunder_light)
+            lightning: [0.0; 4],
             // the app gives the feet set down (scene/snow_trail.rs)
             snow_stamps: [[0.0; 4]; aurora_render::SNOW_STAMPS],
             snow_stamp_count: 0,

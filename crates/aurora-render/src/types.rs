@@ -1285,6 +1285,10 @@ pub struct RainLook {
     /// Puddles freeze while it snows or snow lies (they neither drain nor
     /// dry while frozen).
     pub ice: bool,
+    /// The lightning lighting the sky from where it struck: x, y the way to
+    /// it (unit), z the sine of the glow's height in the sky, w how bright
+    /// (0: none).
+    pub lightning: [f32; 4],
     /// Feet set down this frame: x, y (m), the foot's heading (rad), its half
     /// length (m); the first `snow_stamp_count`.
     pub snow_stamps: [[f32; 4]; SNOW_STAMPS],
@@ -1307,6 +1311,7 @@ impl Default for RainLook {
             snow_lying: 0.0,
             footprints: false,
             ice: false,
+            lightning: [0.0; 4],
             snow_stamps: [[0.0; 4]; SNOW_STAMPS],
             snow_stamp_count: 0,
         }

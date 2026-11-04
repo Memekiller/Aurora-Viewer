@@ -188,6 +188,9 @@ struct FrameU {
     /// Feet set down this frame: x, y (m), the foot's heading (rad), its
     /// half length (m).
     snow_stamps: [[f32; 4]; crate::types::SNOW_STAMPS],
+    /// The lightning's glow in the sky: xy the way to it, z its height
+    /// (sine), w how bright.
+    lightning: [f32; 4],
     /// The main view of a photo tile: its part of the photo
     /// ([`photo_part`]); zero otherwise. The screen-space reflections fade
     /// at the photo's edges, not the tile's.
@@ -5641,6 +5644,7 @@ impl Backend {
         u.snow_trail = self.snow_trail.uniform;
         u.snow_trail_step = self.snow_trail.step;
         u.snow_stamps = f.rain_look.snow_stamps;
+        u.lightning = f.rain_look.lightning;
         u.rain_look = [
             f32::from(u8::from(f.rain_look.puddles)),
             f.rain_look.distance,

@@ -121,6 +121,7 @@ struct Frame {
     snow_trail: vec4<f32>,      // footprints: corner xy, size z (0: none), w how many stamps
     snow_trail_step: vec4<f32>, // last corner xy, z time since (s, < 0: none), w how hard it snows
     snow_stamps: array<vec4<f32>, 16>, // feet set down: x, y, heading (rad), half length (m)
+    lightning: vec4<f32>,       // the lightning's glow: xy the way to it, z its height (sine), w how bright
     photo: vec4<f32>,           // the main view of a photo tile: its part of the photo (left, top, width, height); zero otherwise
 };
 
